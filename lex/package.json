@@ -1,0 +1,40 @@
+{
+  "name": "lex",
+  "version": "0.1.0",
+  "description": "Language-agnostic syntax highlighting from a 30 KB neural model running on WebGPU",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "files": [
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./src/index.js",
+    "./react": "./src/react.js",
+    "./tokenizer": "./src/tokenizer.js",
+    "./runtime": "./src/runtime.js",
+    "./theme.css": "./src/theme.css",
+    "./shader.wgsl": "./src/shader.wgsl",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "syntax-highlighting",
+    "webgpu",
+    "wgsl",
+    "neural",
+    "lexer"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+train/data_cache/
+train/checkpoints/
+archive
+train/corpus
+demo/dist
+summary.md

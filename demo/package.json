@@ -1,0 +1,21 @@
+{
+  "name": "lex-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "capture": "echo \"with `npm run dev` running, open http://localhost:5173/capture.html \u2014 it writes src/results.json\""
+  },
+  "dependencies": {
+    "gpu-lexer": "^0.0.2",
+    "lex": "file:../lex",
+    "prismjs": "^1.30.0",
+    "shiki": "^4.4.3",
+    "sugar-high": "^2.3.1"
+  },
+  "devDependencies": {
+    "vite": "^7.1.5"
+  }
+}

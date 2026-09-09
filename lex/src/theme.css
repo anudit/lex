@@ -1,0 +1,42 @@
+/* Default theme. Nine classes, tuned for both colour schemes; override any of
+   the custom properties to retheme without touching the markup. */
+.lex {
+  --lex-plain: #24292f;
+  --lex-comment: #6e7781;
+  --lex-string: #0a3069;
+  --lex-number: #0550ae;
+  --lex-keyword: #cf222e;
+  --lex-type: #953800;
+  --lex-function: #8250df;
+  --lex-constant: #0550ae;
+  --lex-operator: #24292f;
+
+  margin: 0;
+  overflow-x: auto;
+  color: var(--lex-plain);
+  font: 13px/1.6 ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  tab-size: 2;
+}
+
+@media (prefers-color-scheme: dark) {
+  .lex {
+    --lex-plain: #e6edf3;
+    --lex-comment: #8b949e;
+    --lex-string: #a5d6ff;
+    --lex-number: #79c0ff;
+    --lex-keyword: #ff7b72;
+    --lex-type: #ffa657;
+    --lex-function: #d2a8ff;
+    --lex-constant: #79c0ff;
+    --lex-operator: #e6edf3;
+  }
+}
+
+.lex-comment  { color: var(--lex-comment); font-style: italic; }
+.lex-string   { color: var(--lex-string); }
+.lex-number   { color: var(--lex-number); }
+.lex-keyword  { color: var(--lex-keyword); }
+.lex-type     { color: var(--lex-type); }
+.lex-function { color: var(--lex-function); }
+.lex-constant { color: var(--lex-constant); }
+.lex-operator { color: var(--lex-operator); }

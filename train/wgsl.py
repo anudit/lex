@@ -1,0 +1,735 @@
+"""
+Generates the WGSL compute shaders from the exported weight metadata.
+
+The kernel is split into several entry points rather than one fused dispatch.
+That reverses an earlier decision, and the reason is measured: profiling
+gpu-lexer showed GPU work was ~3% of its latency, so a single workgroup looked
+free. That profile was of *their* model. Ours does far more arithmetic per token,
+and one workgroup is 64 lanes of a GPU that has thousands -- it ran 2x slower
+than gpu-lexer on a single call and 7x slower on a batch.
+
+The split follows where the work actually is. Per token per layer:
+
+    matmuls (proj_in, proj_out, depthwise)   16,704 MACs   99.2%
+    bidirectional recurrence                    128 MACs    0.8%
+
+So only the matmuls need parallelizing. They are token-parallel and get one
+workgroup per 16-token tile; the recurrence stays on a single workgroup walking
+the sequence, which needs no chunked-scan machinery and costs almost nothing.
+
+Every entry point shares one bind group and one command buffer, so the whole
+model is still a single submit and a single mapAsync readback -- which is where
+96% of the latency of a call actually goes. Batched calls use the second dispatch
+dimension: workgroup_id.y selects the job.
+
+Tensor offsets are baked in as literals at generation time, so the kernels do no
+indirection to find a weight.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+TILE = 16        # tokens per workgroup for the token-parallel passes
+TILE_POOL = 4    # smaller tile for the pooled-context pass; its rows are 4*DIM
+MAX_JOBS = 64    # uniform job array needs a compile-time size
+N_REGIONS = 7    # per job: nrm, b, fwd, bwd, ctx, pooled stats, film.
+                 # Must equal SCRATCH_REGIONS in lex/src/runtime.js: the
+                 # region base is NREG * stride * job, so a mismatch makes
+                 # one job's film block land on the next job's region 0.
+
+
+def _consts(meta: dict) -> str:
+    t = meta['tensors']
+    cfg = meta['config']
+    lines = [
+        f"const DIM: u32 = {cfg['dim']}u;",
+        f"const EDIM: u32 = {cfg['embed_dim']}u;",
+        f"const HEAD_HIDDEN: u32 = {cfg['head_hidden']}u;",
+        f"const NCLASS: u32 = {cfg['num_classes']}u;",
+        f"const KSIZE: u32 = {cfg['kernel_size']}u;",
+        f"const TILE: u32 = {TILE}u;",
+        f"const TILE_POOL: u32 = {TILE_POOL}u;",
+        f"const MAX_JOBS: u32 = {MAX_JOBS}u;",
+        f"const NREG: u32 = {N_REGIONS}u;",
+    ]
+
+    def q(name: str, prefix: str) -> None:
+        e = t[name]
+        lines.append(f"const {prefix}_P: u32 = {e['plane_offset']}u;")
+        lines.append(f"const {prefix}_W: u32 = {e['words_per_plane']}u;")
+        lines.append(f"const {prefix}_B: u32 = {e['bits']}u;")
+        lines.append(f"const {prefix}_S: u32 = {e['scale_offset']}u;")
+        if 'bias_offset' in e:
+            lines.append(f"const {prefix}_BI: u32 = {e['bias_offset']}u;")
+
+    q('embedding.table', 'EMB')
+    q('embedding.up', 'UP')
+    q('film.down', 'FD')
+    q('film.up', 'FU')
+    q('global_ctx.summary', 'GS')
+    q('global_ctx.gate', 'GG')
+    q('head_hidden', 'HH')
+    q('head_out', 'HO')
+    lines.append(f"const HNORM_F: u32 = {t['head_norm.weight']['f16_offset']}u;")
+    lines.append(f"const FS_F: u32 = {t['film.strength']['f16_offset']}u;")
+    lines.append(f"const FN_F: u32 = {t['film.norm.weight']['f16_offset']}u;")
+    lines.append(f"const NLAYER: u32 = {cfg['n_layers']}u;")
+
+    fo = meta['field_offsets']
+    order = list(meta['field_sizes'].keys())
+    lines.append('const FIELD_ROW: array<u32, %d> = array<u32, %d>(%s);' % (
+        len(order), len(order), ', '.join(f'{fo[k]}u' for k in order)))
+    lines.append(f"const FLAG_ROW: u32 = {meta['flag_offset']}u;")
+    lines.append(f"const NFIELD: u32 = {len(order)}u;")
+    lines.append(f"const NFLAG: u32 = {meta['n_flag_bits']}u;")
+    return '\n'.join(lines)
+
+
+PRELUDE = r'''
+// One job per workgroup_id.y. Batched calls dispatch every job together so they
+// run concurrently and share one readback.
+struct Job {
+    token_count: u32,
+    token_offset: u32,   // slice of the shared token/output buffers
+    stage: u32,          // reserved for the stage-diff test harness
+    stride: u32,         // per-job hidden-state stride, = maxTokens * DIM
+};
+
+@group(0) @binding(0) var<storage, read>       tokens : array<u32>;
+@group(0) @binding(1) var<storage, read>       planes : array<u32>;
+@group(0) @binding(2) var<storage, read>       fp     : array<f32>;
+@group(0) @binding(3) var<storage, read_write> hid    : array<f32>;
+@group(0) @binding(4) var<storage, read_write> scratch: array<f32>;
+@group(0) @binding(5) var<storage, read_write> out_cls: array<u32>;
+// A uniform array, not storage: Tint treats uniform loads indexed by a builtin
+// as uniform, which is what allows `workgroupBarrier` inside job-dependent
+// loops. A storage load here makes every barrier in the kernel illegal.
+@group(0) @binding(6) var<uniform>             jobs   : array<Job, MAX_JOBS>;
+
+var<workgroup> tA  : array<f32, 1536>;   // TILE x DIM, reused as TILE x HEAD_HIDDEN
+var<workgroup> tB  : array<f32, 2048>;   // TILE x 2*DIM
+var<workgroup> tP  : array<f32, 1024>;   // TILE_POOL x 4*DIM
+var<workgroup> red : array<f32, 64>;
+var<workgroup> lg  : array<f32, 144>;    // TILE x NCLASS
+
+// WGSL's tanh is computed as (e^2x - 1)/(e^2x + 1) on some backends, so a
+// moderately large argument overflows to inf/inf = NaN instead of saturating.
+// The GELU in the head reaches that range routinely -- its cubic term hits ~90 at
+// an input of ~14 -- which silently turned whole tokens into NaN logits and made
+// argmax fall back to class 0. Clamping is exact: tanh(15) and sigmoid(30) are
+// already 1.0 in f32.
+fn tanh_s(x: f32) -> f32 { return tanh(clamp(x, -15.0, 15.0)); }
+fn sigmoid_s(x: f32) -> f32 { return 1.0 / (1.0 + exp(-clamp(x, -30.0, 30.0))); }
+
+// k-bit weight from bit-planes. Used only where the row index depends on data:
+// the embedding table and the depthwise kernel.
+fn wgt(base: u32, wpp: u32, bits: u32, idx: u32, scale: f32) -> f32 {
+    var c: u32 = 0u;
+    let w = idx >> 5u;
+    let b = idx & 31u;
+    for (var p: u32 = 0u; p < bits; p = p + 1u) {
+        c = c | (((planes[base + p * wpp + w] >> b) & 1u) << p);
+    }
+    if (bits == 1u) { return select(-scale, scale, c == 1u); }
+    return (f32(c) - f32(1u << (bits - 1u))) * scale;
+}
+
+// Every projection is 1-bit and its rows are a multiple of 32 wide, so a whole
+// row is 1-8 u32 held in registers for the life of the dispatch. Each MAC is
+// then a register shift and a sign select rather than a dependent global load.
+fn m1(w: u32, k: u32, x: f32) -> f32 { return select(-x, x, ((w >> k) & 1u) == 1u); }
+
+fn dotA32(w: u32, base: u32) -> f32 {
+    var a: f32 = 0.0;
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w, k, tA[base + k]); }
+    return a;
+}
+fn dotA64(w0: u32, w1: u32, base: u32) -> f32 {
+    var a: f32 = 0.0;
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w0, k, tA[base + k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w1, k, tA[base + 32u + k]); }
+    return a;
+}
+fn dotA96(w0: u32, w1: u32, w2: u32, base: u32) -> f32 {
+    var a: f32 = 0.0;
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w0, k, tA[base + k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w1, k, tA[base + 32u + k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w2, k, tA[base + 64u + k]); }
+    return a;
+}
+fn dotA128(w0: u32, w1: u32, w2: u32, w3: u32, base: u32) -> f32 {
+    var a: f32 = 0.0;
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w0, k, tA[base + k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w1, k, tA[base + 32u + k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w2, k, tA[base + 64u + k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w3, k, tA[base + 96u + k]); }
+    return a;
+}
+fn dotRed64(w0: u32, w1: u32) -> f32 {
+    var a: f32 = 0.0;
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w0, k, red[k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w1, k, red[32u + k]); }
+    return a;
+}
+fn dotB128(w0: u32, w1: u32, w2: u32, w3: u32, base: u32) -> f32 {
+    var a: f32 = 0.0;
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w0, k, tB[base + k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w1, k, tB[base + 32u + k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w2, k, tB[base + 64u + k]); }
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w3, k, tB[base + 96u + k]); }
+    return a;
+}
+
+fn tw0(o: u32, i: u32) -> u32 { return tokens[(o + i) * 2u]; }
+fn tw1(o: u32, i: u32) -> u32 { return tokens[(o + i) * 2u + 1u]; }
+fn tok_kind(o: u32, i: u32)  -> u32 { return  tw0(o, i)        & 3u; }
+fn tok_flags(o: u32, i: u32) -> u32 { return (tw0(o, i) >> 19u) & 255u; }
+
+fn field_id(o: u32, i: u32, f: u32) -> u32 {
+    switch f {
+        case 0u:  { return  tw0(o, i)        & 3u; }
+        case 1u:  { return (tw0(o, i) >>  2u) & 7u; }
+        case 2u:  { return (tw0(o, i) >>  5u) & 127u; }
+        case 3u:  { return (tw0(o, i) >> 12u) & 127u; }
+        case 4u:  { return  tw1(o, i)        & 1023u; }
+        case 5u:  { return (tw1(o, i) >> 10u) & 127u; }
+        case 6u:  { return (tw1(o, i) >> 17u) & 15u; }
+        case 7u:  { return (tw1(o, i) >> 21u) & 15u; }
+        case 8u:  { return (tw1(o, i) >> 25u) & 31u; }
+        default:  { return (tw0(o, i) >> 27u) & 31u; }
+    }
+}
+
+// Per-token inverse RMS for a tile, computed by the first TILE threads.
+fn tile_rms(d: u32, n: u32) {
+    if (d < n) {
+        var s: f32 = 0.0;
+        for (var k: u32 = 0u; k < DIM; k = k + 1u) {
+            let v = tA[d * DIM + k];
+            s = s + v * v;
+        }
+        red[d] = inverseSqrt(s / f32(DIM) + 1e-6);
+    }
+}
+'''
+
+EMBED = r'''
+@compute @workgroup_size(64)
+fn embed(@builtin(local_invocation_id) lid: vec3<u32>,
+         @builtin(workgroup_id) wid: vec3<u32>) {
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let off = job.token_offset;
+    let hbase = job.stride * wid.y;
+    let base_t = wid.x * TILE;
+
+    let up_w = planes[UP_P + d];
+    let up_s = fp[UP_S + d];
+    let up_b = fp[UP_BI + d];
+
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {
+        let t = base_t + j;
+        if (d < EDIM) {
+            var acc: f32 = 0.0;
+            if (t < T) {
+                let kind = tok_kind(off, t);
+                for (var f: u32 = 0u; f < NFIELD; f = f + 1u) {
+                    // Word hashes are undefined on non-word tokens; feeding
+                    // bucket 0 into every symbol would alias them together.
+                    if ((f == 4u || f == 5u) && kind != 0u) { continue; }
+                    let row = FIELD_ROW[f] + field_id(off, t, f);
+                    acc = acc + wgt(EMB_P, EMB_W, EMB_B, row * EDIM + d, fp[EMB_S + f]);
+                }
+                let flags = tok_flags(off, t);
+                for (var b: u32 = 0u; b < NFLAG; b = b + 1u) {
+                    if (((flags >> b) & 1u) == 1u) {
+                        acc = acc + wgt(EMB_P, EMB_W, EMB_B,
+                                        (FLAG_ROW + b) * EDIM + d, fp[EMB_S + NFIELD]);
+                    }
+                }
+            }
+            tA[j * EDIM + d] = acc;
+        }
+    }
+    workgroupBarrier();
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {
+        let t = base_t + j;
+        if (t < T) { hid[hbase + t * DIM + d] = up_b + up_s * dotA32(up_w, j * EDIM); }
+    }
+}
+'''
+
+SIGNATURE = r"""
+// ---- document signature and FiLM --------------------------------------------
+// A linear probe recovers the language from this pooled signature at 84%
+// accuracy, and the model was previously only able to use that at the very last
+// layer. These two passes compute it once and turn it into a per-layer, per-
+// channel scale and shift, so it reaches the depthwise conv and the recurrence.
+@compute @workgroup_size(64)
+fn sig_pool(@builtin(local_invocation_id) lid: vec3<u32>,
+            @builtin(workgroup_id) wid: vec3<u32>) {
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let hbase = job.stride * wid.y;
+    let r_film = NREG * job.stride * wid.y + 6u * job.stride;
+
+    var s: f32 = 0.0;
+    var mx: f32 = -3.4e38;
+    for (var t: u32 = 0u; t < T; t = t + 1u) {
+        let v = hid[hbase + t * DIM + d];
+        s = s + v;
+        mx = max(mx, v);
+    }
+    scratch[r_film + d] = s / max(1.0, f32(T));
+    scratch[r_film + DIM + d] = mx;
+}
+
+@compute @workgroup_size(64)
+fn film(@builtin(local_invocation_id) lid: vec3<u32>,
+        @builtin(workgroup_id) wid: vec3<u32>) {
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let r_film = NREG * job.stride * wid.y + 6u * job.stride;
+
+    // Signature into workgroup memory, RMS-normalized. Without the norm the
+    // projection below saturates tanh for most units and stops distinguishing
+    // documents at all.
+    tA[d] = scratch[r_film + d];
+    tA[DIM + d] = scratch[r_film + DIM + d];
+    workgroupBarrier();
+    var ss: f32 = 0.0;
+    for (var k: u32 = 0u; k < 2u * DIM; k = k + 1u) { ss = ss + tA[k] * tA[k]; }
+    let inv = inverseSqrt(ss / f32(2u * DIM) + 1e-6);
+    let n0 = tA[d] * inv * fp[FN_F + d];
+    let n1 = tA[DIM + d] * inv * fp[FN_F + DIM + d];
+    workgroupBarrier();
+    tA[d] = n0;
+    tA[DIM + d] = n1;
+    workgroupBarrier();
+    red[d] = tanh_s(fp[FD_BI + d] + fp[FD_S + d] * dotA128(
+        planes[FD_P + d * 4u], planes[FD_P + d * 4u + 1u],
+        planes[FD_P + d * 4u + 2u], planes[FD_P + d * 4u + 3u], 0u));
+    workgroupBarrier();
+
+    // 2 * DIM outputs per layer, spread across the 64 threads.
+    let n_out = NLAYER * 2u * DIM;
+    for (var o = d; o < n_out; o = o + 64u) {
+        let raw = fp[FU_BI + o] + fp[FU_S + o] * dotRed64(
+            planes[FU_P + o * 2u], planes[FU_P + o * 2u + 1u]);
+        let l = o / (2u * DIM);
+        let rem = o % (2u * DIM);
+        let c = rem % DIM;
+        let str = fp[FS_F + l * DIM + c];
+        // k == 0 is the scale (identity at strength 0), k == 1 the shift.
+        let v = select(str * tanh_s(raw), 1.0 + str * tanh_s(raw), rem < DIM);
+        scratch[r_film + 2u * DIM + o] = v;
+    }
+}
+"""
+
+LAYER_TEMPLATE = r'''
+// ---- layer {L} -------------------------------------------------------------
+
+@compute @workgroup_size(64)
+fn l{L}_pre(@builtin(local_invocation_id) lid: vec3<u32>,
+            @builtin(workgroup_id) wid: vec3<u32>) {{
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let hbase = job.stride * wid.y;
+    let sbase = NREG * job.stride * wid.y;
+    let r_nrm = sbase;
+    let r_film = sbase + 6u * job.stride;
+    let base_t = wid.x * TILE;
+
+    let gain = fp[{NORM_F}u + d];
+    // FiLM for this layer: scale and shift produced from the document signature.
+    let gamma = scratch[r_film + 2u * DIM + ({L}u * 2u + 0u) * DIM + d];
+    let beta = scratch[r_film + 2u * DIM + ({L}u * 2u + 1u) * DIM + d];
+    // Normalize this tile plus its two-token halo, so the depthwise window has
+    // the values it needs without a separate pass over the whole sequence.
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {{
+        let t = base_t + j;
+        tA[j * DIM + d] = select(0.0, hid[hbase + t * DIM + d], t < T);
+    }}
+    workgroupBarrier();
+    tile_rms(d, TILE);
+    workgroupBarrier();
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {{
+        let t = base_t + j;
+        if (t < T) {{
+            scratch[r_nrm + t * DIM + d] =
+                (tA[j * DIM + d] * red[j] * gain) * gamma + beta;
+        }}
+    }}
+}}
+
+@compute @workgroup_size(64)
+fn l{L}_conv(@builtin(local_invocation_id) lid: vec3<u32>,
+             @builtin(workgroup_id) wid: vec3<u32>) {{
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let sbase = NREG * job.stride * wid.y;
+    let r_nrm = sbase;
+    let r_b = sbase + job.stride;
+    let base_t = wid.x * TILE;
+
+    let pic0 = planes[{PI_P}u + d * 2u];
+    let pic1 = planes[{PI_P}u + d * 2u + 1u];
+    let pig0 = planes[{PI_P}u + (DIM + d) * 2u];
+    let pig1 = planes[{PI_P}u + (DIM + d) * 2u + 1u];
+    let sc = fp[{PI_S}u + d];
+    let sg = fp[{PI_S}u + DIM + d];
+    let bc = fp[{PI_BI}u + d];
+    let bg = fp[{PI_BI}u + DIM + d];
+    let dbias = fp[{DW_BI}u + d];
+    let dws = fp[{DW_S}u + d];
+    var dwv: array<f32, 5>;
+    for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {{
+        dwv[k] = wgt({DW_P}u, {DW_W}u, {DW_B}u, d * KSIZE + k, dws);
+    }}
+
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {{
+        let t = base_t + j;
+        var acc: f32 = 0.0;
+        if (t < T) {{
+            acc = dbias;
+            for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {{
+                let o = i32(t) + i32(k) - i32(KSIZE / 2u);
+                if (o >= 0 && o < i32(T)) {{
+                    acc = acc + dwv[k] * scratch[r_nrm + u32(o) * DIM + d];
+                }}
+            }}
+        }}
+        tA[j * DIM + d] = acc;
+    }}
+    workgroupBarrier();
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {{
+        let t = base_t + j;
+        if (t < T) {{
+            let cand = bc + sc * dotA64(pic0, pic1, j * DIM);
+            let gate = bg + sg * dotA64(pig0, pig1, j * DIM);
+            scratch[r_b + t * DIM + d] = tanh_s(cand) * sigmoid_s(gate);
+        }}
+    }}
+}}
+
+// One workgroup: the recurrence is 0.8% of the layer's arithmetic and is
+// sequential in t, so spreading it would cost more in carries than it saves.
+@compute @workgroup_size(64)
+fn l{L}_scan(@builtin(local_invocation_id) lid: vec3<u32>,
+             @builtin(workgroup_id) wid: vec3<u32>) {{
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let sbase = NREG * job.stride * wid.y;
+    let r_b = sbase + job.stride;
+    let r_fw = sbase + 2u * job.stride;
+    let r_bw = sbase + 3u * job.stride;
+
+    let af = sigmoid_s(fp[{DF_F}u + d]);
+    let ab = sigmoid_s(fp[{DB_F}u + d]);
+    var hf: f32 = 0.0;
+    for (var t: u32 = 0u; t < T; t = t + 1u) {{
+        hf = af * hf + scratch[r_b + t * DIM + d];
+        scratch[r_fw + t * DIM + d] = hf;
+    }}
+    var hb: f32 = 0.0;
+    for (var t: u32 = 0u; t < T; t = t + 1u) {{
+        let ti = T - 1u - t;
+        hb = ab * hb + scratch[r_b + ti * DIM + d];
+        scratch[r_bw + ti * DIM + d] = hb;
+    }}
+}}
+
+@compute @workgroup_size(64)
+fn l{L}_post(@builtin(local_invocation_id) lid: vec3<u32>,
+             @builtin(workgroup_id) wid: vec3<u32>) {{
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let hbase = job.stride * wid.y;
+    let sbase = NREG * job.stride * wid.y;
+    let r_fw = sbase + 2u * job.stride;
+    let r_bw = sbase + 3u * job.stride;
+    let base_t = wid.x * TILE;
+
+    let po0 = planes[{PO_P}u + d * 4u];
+    let po1 = planes[{PO_P}u + d * 4u + 1u];
+    let po2 = planes[{PO_P}u + d * 4u + 2u];
+    let po3 = planes[{PO_P}u + d * 4u + 3u];
+    let spo = fp[{PO_S}u + d];
+    let bpo = fp[{PO_BI}u + d];
+    let og = sigmoid_s(fp[{OG_F}u + d]);
+
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {{
+        let t = base_t + j;
+        if (t < T) {{
+            tB[j * 2u * DIM + d]       = scratch[r_fw + t * DIM + d];
+            tB[j * 2u * DIM + DIM + d] = scratch[r_bw + t * DIM + d];
+        }}
+    }}
+    workgroupBarrier();
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {{
+        let t = base_t + j;
+        if (t < T) {{
+            let y = bpo + spo * dotB128(po0, po1, po2, po3, j * 2u * DIM);
+            hid[hbase + t * DIM + d] = hid[hbase + t * DIM + d] + y * og;
+        }}
+    }}
+}}
+'''
+
+POOL_HEAD = r'''
+// ---- file-scale context ----------------------------------------------------
+// Four pooled views: mean and max are constant across the sequence; the prefix
+// and suffix means vary with position, which is what lets the model tell "this
+// identifier was declared earlier" from "it appears out of nowhere". The running
+// sums are sequential in t, so they share the single-workgroup pass.
+@compute @workgroup_size(64)
+fn pool_reduce(@builtin(local_invocation_id) lid: vec3<u32>,
+               @builtin(workgroup_id) wid: vec3<u32>) {
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let hbase = job.stride * wid.y;
+    let sbase = NREG * job.stride * wid.y;
+    let r_pre = sbase;                       // reuses the normalized-input region
+    let r_suf = sbase + job.stride;          // reuses the scan-input region
+    let r_stat = sbase + 5u * job.stride;
+
+    var s: f32 = 0.0;
+    var mx: f32 = -3.4e38;
+    for (var t: u32 = 0u; t < T; t = t + 1u) {
+        let v = hid[hbase + t * DIM + d];
+        s = s + v;
+        mx = max(mx, v);
+        scratch[r_pre + t * DIM + d] = s / f32(t + 1u);
+    }
+    var sb: f32 = 0.0;
+    for (var t: u32 = 0u; t < T; t = t + 1u) {
+        let ti = T - 1u - t;
+        sb = sb + hid[hbase + ti * DIM + d];
+        scratch[r_suf + ti * DIM + d] = sb / f32(t + 1u);
+    }
+    scratch[r_stat + d] = s / max(1.0, f32(T));
+    scratch[r_stat + DIM + d] = mx;
+}
+
+@compute @workgroup_size(64)
+fn pool_apply(@builtin(local_invocation_id) lid: vec3<u32>,
+              @builtin(workgroup_id) wid: vec3<u32>) {
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let hbase = job.stride * wid.y;
+    let sbase = NREG * job.stride * wid.y;
+    let r_pre = sbase;
+    let r_suf = sbase + job.stride;
+    let r_ctx = sbase + 4u * job.stride;
+    let r_stat = sbase + 5u * job.stride;
+    let base_t = wid.x * TILE_POOL;
+
+    let gs0 = planes[GS_P + d * 8u];
+    let gs1 = planes[GS_P + d * 8u + 1u];
+    let gs2 = planes[GS_P + d * 8u + 2u];
+    let gs3 = planes[GS_P + d * 8u + 3u];
+    let gs4 = planes[GS_P + d * 8u + 4u];
+    let gs5 = planes[GS_P + d * 8u + 5u];
+    let gs6 = planes[GS_P + d * 8u + 6u];
+    let gs7 = planes[GS_P + d * 8u + 7u];
+    let gss = fp[GS_S + d];
+    let gsb = fp[GS_BI + d];
+    let gg0 = planes[GG_P + d * 2u];
+    let gg1 = planes[GG_P + d * 2u + 1u];
+    let ggs = fp[GG_S + d];
+    let ggb = fp[GG_BI + d];
+
+    for (var j: u32 = 0u; j < TILE_POOL; j = j + 1u) {
+        let t = base_t + j;
+        let ok = t < T;
+        tP[j * 4u * DIM + d]             = scratch[r_stat + d];
+        tP[j * 4u * DIM + DIM + d]       = scratch[r_stat + DIM + d];
+        tP[j * 4u * DIM + 2u * DIM + d]  = select(0.0, scratch[r_pre + t * DIM + d], ok);
+        tP[j * 4u * DIM + 3u * DIM + d]  = select(0.0, scratch[r_suf + t * DIM + d], ok);
+        tA[j * DIM + d] = select(0.0, hid[hbase + t * DIM + d], ok);
+    }
+    workgroupBarrier();
+    for (var j: u32 = 0u; j < TILE_POOL; j = j + 1u) {
+        let t = base_t + j;
+        if (t < T) {
+            let b = j * 4u * DIM;
+            var acc: f32 = 0.0;
+            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs0, k, tP[b + k]); }
+            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs1, k, tP[b + 32u + k]); }
+            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs2, k, tP[b + 64u + k]); }
+            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs3, k, tP[b + 96u + k]); }
+            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs4, k, tP[b + 128u + k]); }
+            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs5, k, tP[b + 160u + k]); }
+            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs6, k, tP[b + 192u + k]); }
+            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs7, k, tP[b + 224u + k]); }
+            let ctx = tanh_s(gsb + gss * acc);
+            let g = sigmoid_s(ggb + ggs * dotA64(gg0, gg1, j * DIM));
+            scratch[r_ctx + t * DIM + d] = ctx * g;
+        }
+    }
+}
+
+// ---- classifier head -------------------------------------------------------
+@compute @workgroup_size(64)
+fn head(@builtin(local_invocation_id) lid: vec3<u32>,
+        @builtin(workgroup_id) wid: vec3<u32>) {
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let off = job.token_offset;
+    let hbase = job.stride * wid.y;
+    let sbase = NREG * job.stride * wid.y;
+    let r_ctx = sbase + 4u * job.stride;
+    let base_t = wid.x * TILE;
+
+    let hgain = fp[HNORM_F + d];
+    let o0 = d;
+    let o1 = DIM + d;
+    let h0a = planes[HH_P + o0 * 4u];
+    let h0b = planes[HH_P + o0 * 4u + 1u];
+    let h0c = planes[HH_P + o0 * 4u + 2u];
+    let h0d = planes[HH_P + o0 * 4u + 3u];
+    var h1a: u32 = 0u; var h1b: u32 = 0u; var h1c: u32 = 0u; var h1d: u32 = 0u;
+    if (o1 < HEAD_HIDDEN) {
+        h1a = planes[HH_P + o1 * 4u];
+        h1b = planes[HH_P + o1 * 4u + 1u];
+        h1c = planes[HH_P + o1 * 4u + 2u];
+        h1d = planes[HH_P + o1 * 4u + 3u];
+    }
+    // head_out is 9 rows; thread c owns class c, so the final matmul is nine
+    // parallel dots rather than one thread doing all of them.
+    var ho0: u32 = 0u; var ho1: u32 = 0u; var ho2: u32 = 0u;
+    if (d < NCLASS) {
+        ho0 = planes[HO_P + d * 3u];
+        ho1 = planes[HO_P + d * 3u + 1u];
+        ho2 = planes[HO_P + d * 3u + 2u];
+    }
+
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {
+        let t = base_t + j;
+        tA[j * DIM + d] = select(0.0, hid[hbase + t * DIM + d], t < T);
+    }
+    workgroupBarrier();
+    tile_rms(d, TILE);
+    workgroupBarrier();
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {
+        let t = base_t + j;
+        tB[j * 2u * DIM + d] = tA[j * DIM + d] * red[j] * hgain;
+        tB[j * 2u * DIM + DIM + d] = select(0.0, scratch[r_ctx + t * DIM + d], t < T);
+    }
+    workgroupBarrier();
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {
+        let a0 = fp[HH_BI + o0] + fp[HH_S + o0] * dotB128(h0a, h0b, h0c, h0d, j * 2u * DIM);
+        let c0 = 0.7978845608 * (a0 + 0.044715 * a0 * a0 * a0);
+        tA[j * HEAD_HIDDEN + o0] = 0.5 * a0 * (1.0 + tanh_s(c0));
+        if (o1 < HEAD_HIDDEN) {
+            let a1 = fp[HH_BI + o1] + fp[HH_S + o1] * dotB128(h1a, h1b, h1c, h1d, j * 2u * DIM);
+            let c1 = 0.7978845608 * (a1 + 0.044715 * a1 * a1 * a1);
+            tA[j * HEAD_HIDDEN + o1] = 0.5 * a1 * (1.0 + tanh_s(c1));
+        }
+    }
+    workgroupBarrier();
+    if (d < NCLASS) {
+        for (var j: u32 = 0u; j < TILE; j = j + 1u) {
+            lg[j * NCLASS + d] = fp[HO_BI + d] + fp[HO_S + d]
+                * dotA96(ho0, ho1, ho2, j * HEAD_HIDDEN);
+        }
+    }
+    workgroupBarrier();
+    if (d < TILE) {
+        let t = base_t + d;
+        if (t < T) {
+            var best: u32 = 0u;
+            var bestv: f32 = lg[d * NCLASS];
+            for (var c: u32 = 1u; c < NCLASS; c = c + 1u) {
+                let v = lg[d * NCLASS + c];
+                if (v > bestv) { bestv = v; best = c; }
+            }
+            out_cls[off + t] = best;
+        }
+    }
+}
+'''
+
+
+def generate(meta: dict) -> str:
+    t = meta['tensors']
+    n = meta['config']['n_layers']
+    parts = ['// Generated by wgsl.py -- do not edit.\n'
+             '// Multi-entry-point pipeline; see the module docstring for the split.\n',
+             _consts(meta), PRELUDE, EMBED, SIGNATURE]
+    for i in range(n):
+        parts.append(LAYER_TEMPLATE.format(
+            L=i,
+            NORM_F=t[f'layers.{i}.norm.weight']['f16_offset'],
+            DF_F=t[f'layers.{i}.decay_f']['f16_offset'],
+            DB_F=t[f'layers.{i}.decay_b']['f16_offset'],
+            OG_F=t[f'layers.{i}.out_gate']['f16_offset'],
+            DW_P=t[f'layers.{i}.dw']['plane_offset'],
+            DW_W=t[f'layers.{i}.dw']['words_per_plane'],
+            DW_B=t[f'layers.{i}.dw']['bits'],
+            DW_S=t[f'layers.{i}.dw']['scale_offset'],
+            DW_BI=t[f'layers.{i}.dw']['bias_offset'],
+            PI_P=t[f'layers.{i}.proj_in']['plane_offset'],
+            PI_S=t[f'layers.{i}.proj_in']['scale_offset'],
+            PI_BI=t[f'layers.{i}.proj_in']['bias_offset'],
+            PO_P=t[f'layers.{i}.proj_out']['plane_offset'],
+            PO_S=t[f'layers.{i}.proj_out']['scale_offset'],
+            PO_BI=t[f'layers.{i}.proj_out']['bias_offset'],
+        ))
+    parts.append(POOL_HEAD)
+    return '\n'.join(parts)
+
+
+def pipeline_order(n_layers: int) -> list[dict]:
+    """Entry points in execution order, and how each one is dispatched.
+
+    `tiled` passes get one workgroup per tile of tokens; the others need the
+    whole sequence in one workgroup because they are sequential in t.
+    """
+    steps: list[dict] = [
+        {'entry': 'embed', 'tile': TILE},
+        {'entry': 'sig_pool', 'tile': 0},
+        {'entry': 'film', 'tile': 0},
+    ]
+    for i in range(n_layers):
+        steps += [
+            {'entry': f'l{i}_pre', 'tile': TILE},
+            {'entry': f'l{i}_conv', 'tile': TILE},
+            {'entry': f'l{i}_scan', 'tile': 0},
+            {'entry': f'l{i}_post', 'tile': TILE},
+        ]
+    steps += [
+        {'entry': 'pool_reduce', 'tile': 0},
+        {'entry': 'pool_apply', 'tile': TILE_POOL},
+        {'entry': 'head', 'tile': TILE},
+    ]
+    return steps
+
+
+def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--meta', default='./checkpoints/weights.meta.json')
+    ap.add_argument('--out', default='./webgpu/shader.wgsl')
+    args = ap.parse_args()
+    meta = json.loads(Path(args.meta).read_text())
+    src = generate(meta)
+    Path(args.out).write_text(src)
+    print(f'wrote {args.out} ({len(src)} bytes, '
+          f'{len(pipeline_order(meta["config"]["n_layers"]))} dispatches)')
+
+
+if __name__ == '__main__':
+    main()
