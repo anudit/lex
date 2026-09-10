@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 import numpy as np
 import torch
@@ -85,7 +86,7 @@ def main() -> None:
           f'micro {100 * q["micro"]:.2f}%')
 
     print('\n1. Convergence')
-    hist = json.load(open('./checkpoints/history.json'))
+    hist = json.load(open(os.path.join(os.path.dirname(args.checkpoint), 'history.json')))
     qh = [h for h in hist if h['quant']]
     print('   last 5 QAT epochs (val loss / weighted):')
     for h in qh[-5:]:

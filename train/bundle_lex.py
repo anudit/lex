@@ -1,9 +1,12 @@
 """
 Bakes the exported model and generated shader into the `lex` package sources.
 
-The weight blob ships inline as base64url rather than as a fetched asset: the
-model is ~30 KB, so the extra HTTP round-trip would cost more than the bytes, and
-inlining keeps `lex` a single import with no network dependency.
+The weight blob ships inline as base85 rather than as a fetched asset: the
+model is ~35 KB, so the extra HTTP round-trip would cost more than the bytes, and
+inlining keeps `lex` a single import with no network dependency. Base85 packs 4
+bytes into 5 characters (25% overhead) instead of base64's 3-into-4 (33%);
+`lex/src/weights-codec.js`'s decoder is a hand-written mirror of this exact
+alphabet and padding rule, so this can just call the stdlib encoder.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ def main() -> None:
 
     meta = json.loads((ck / 'weights.meta.json').read_text())
     blob = (ck / 'weights.bin').read_bytes()
-    b64 = base64.urlsafe_b64encode(blob).decode().rstrip('=')
+    b85 = base64.b85encode(blob).decode()
 
     slim = {k: meta[k] for k in
             ('format', 'config', 'plane_words', 'f16_count',
@@ -42,7 +45,7 @@ def main() -> None:
         '// the token-parallel passes; 0 means the pass needs the whole sequence in\n'
         '// one workgroup because it is sequential in t.\n'
         f'export const PIPELINE = {json.dumps(steps)};\n\n'
-        f'export const WEIGHTS_B64 =\n  "{b64}";\n')
+        f'export const WEIGHTS_B85 =\n  "{b85}";\n')
 
     shader = wgsl.generate(meta)
     (out / 'shader.wgsl').write_text(shader)
@@ -52,7 +55,7 @@ def main() -> None:
         f'export const SHADER = `{escaped}`;\n')
 
     print(f'bundled {meta["total_bytes"] / 1024:.2f} KB of weights '
-          f'({len(b64) / 1024:.1f} KB base64) + {len(shader) / 1024:.1f} KB shader -> {out}')
+          f'({len(b85) / 1024:.1f} KB base85) + {len(shader) / 1024:.1f} KB shader -> {out}')
 
 
 if __name__ == '__main__':

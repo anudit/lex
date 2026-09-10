@@ -12,35 +12,52 @@ REPOS: dict[str, list[str]] = {
     'javascript': [
         'expressjs/express', 'lodash/lodash', 'axios/axios', 'reduxjs/redux',
         'chartjs/Chart.js', 'd3/d3', 'mrdoob/three.js', 'vuejs/core',
+        'facebook/react', 'babel/babel', 'webpack/webpack', 'eslint/eslint',
+        'facebook/jest', 'hexojs/hexo', 'koajs/koa', 'socketio/socket.io',
+        'gulpjs/gulp', 'markedjs/marked',
     ],
     'typescript': [
         'microsoft/vscode', 'nestjs/nest', 'trpc/trpc', 'pmndrs/zustand',
         'colinhacks/zod', 'TanStack/query', 'vitejs/vite', 'excalidraw/excalidraw',
+        'calcom/cal.com', 'payloadcms/payload', 'ant-design/ant-design',
+        'storybookjs/storybook', 'prisma/prisma', 'clerk/javascript',
+        'refinedev/refine',
     ],
     'python': [
         'pallets/flask', 'psf/requests', 'django/django', 'pandas-dev/pandas',
         'encode/httpx', 'pydantic/pydantic', 'fastapi/fastapi', 'scrapy/scrapy',
+        'scikit-learn/scikit-learn', 'home-assistant/core', 'celery/celery',
+        'pallets/werkzeug', 'pallets/jinja', 'pallets/click', 'python/mypy',
+        'certbot/certbot', 'networkx/networkx', 'sympy/sympy',
     ],
     'rust': [
         'BurntSushi/ripgrep', 'sharkdp/bat', 'tokio-rs/tokio', 'serde-rs/serde',
         'clap-rs/clap', 'rust-lang/regex', 'starship/starship', 'sharkdp/fd',
+        'actix/actix-web', 'hyperium/hyper', 'tauri-apps/tauri', 'diesel-rs/diesel',
     ],
     'go': [
         'gin-gonic/gin', 'spf13/cobra', 'sirupsen/logrus', 'gorilla/mux',
         'go-chi/chi', 'urfave/cli', 'stretchr/testify', 'hashicorp/consul',
+        'moby/moby', 'kubernetes/kubernetes', 'caddyserver/caddy', 'fatih/color',
     ],
     'c': [
         'curl/curl', 'redis/redis', 'git/git', 'jqlang/jq',
         'libuv/libuv', 'nothings/stb', 'antirez/sds', 'DaveGamble/cJSON',
+        'openssl/openssl', 'jemalloc/jemalloc',
+        'sqlite/sqlite', 'facebook/zstd', 'lz4/lz4', 'wg/wrk',
+        'file/file',
     ],
     'cpp': [
         'nlohmann/json', 'fmtlib/fmt', 'google/googletest', 'gabime/spdlog',
         'catchorg/Catch2', 'protocolbuffers/protobuf', 'opencv/opencv', 'ocornut/imgui',
+        'aseprite/aseprite', 'godotengine/godot', 'aria2/aria2',
     ],
     'csharp': [
         'dotnet/runtime', 'AutoMapper/AutoMapper', 'JamesNK/Newtonsoft.Json',
         'serilog/serilog', 'App-vNext/Polly', 'restsharp/RestSharp',
         'quartznet/quartznet', 'MassTransit/MassTransit',
+        'dotnet/roslyn', 'jellyfin/jellyfin', 'RavenDB/ravendb',
+        'AvaloniaUI/Avalonia', 'CommunityToolkit/dotnet',
     ],
     'java': [
         'google/guava', 'square/retrofit', 'square/okhttp', 'ReactiveX/RxJava',
@@ -48,6 +65,8 @@ REPOS: dict[str, list[str]] = {
         'junit-team/junit5', 'spring-projects/spring-boot', 'elastic/elasticsearch',
         'apache/dubbo', 'mybatis/mybatis-3', 'google/error-prone', 'apache/flink',
         'apache/lucene', 'quarkusio/quarkus',
+        'apache/kafka', 'apache/hadoop', 'apache/cassandra',
+        'apache/tomcat', 'eclipse-vertx/vert.x',
     ],
     'kotlin': [
         'square/okio', 'InsertKoinIO/koin', 'Kotlin/kotlinx.coroutines',
@@ -64,10 +83,15 @@ REPOS: dict[str, list[str]] = {
     'ruby': [
         'rails/rails', 'sinatra/sinatra', 'jekyll/jekyll', 'rubocop/rubocop',
         'fastlane/fastlane', 'rspec/rspec-core', 'sidekiq/sidekiq', 'ruby/rake',
+        'heartcombo/devise', 'caskroom/homebrew-cask',
+        'puma/puma', 'Homebrew/brew', 'gitlabhq/gitlabhq', 'chef/chef',
     ],
     'php': [
         'laravel/framework', 'symfony/symfony', 'guzzle/guzzle', 'composer/composer',
         'phpunit/phpunit', 'monolog/monolog', 'slimphp/Slim', 'doctrine/orm',
+        'filamentphp/filament', 'briannesbitt/Carbon', 'spatie/laravel-permission',
+        'fakerphp/faker', 'tymondesigns/jwt-auth',
+        'WordPress/WordPress', 'phpmyadmin/phpmyadmin', 'top-think/framework',
     ],
     'lua': [
         'openresty/lua-nginx-module', 'nvim-lua/kickstart.nvim', 'kikito/inspect.lua',
@@ -89,10 +113,13 @@ REPOS: dict[str, list[str]] = {
         'sqlitebrowser/sqlitebrowser', 'supabase/supabase', 'metabase/metabase',
         'dbt-labs/dbt-core', 'apache/spark', 'prisma/prisma', 'hasura/graphql-engine',
         'duckdb/duckdb',
+        'liquibase/liquibase', 'flyway/flyway', 'dolthub/dolt',
     ],
     'shell': [
         'ohmyzsh/ohmyzsh', 'nvm-sh/nvm', 'romkatv/powerlevel10k', 'Homebrew/brew',
         'junegunn/fzf', 'dylanaraps/pfetch', 'bats-core/bats-core', 'koalaman/shellcheck',
+        'asdf-vm/asdf', 'pi-hole/pi-hole', 'basecamp/omakub', 'tmux-plugins/tpm',
+        'sindresorhus/pure', 'rupa/z', 'vundlevim/vundle.vim',
     ],
     'powershell': [
         'PowerShell/PowerShell', 'PowerShell/PSScriptAnalyzer', 'pester/Pester',
@@ -108,6 +135,7 @@ REPOS: dict[str, list[str]] = {
         'ColorlibHQ/AdminLTE', 'themefisher/meghna-hugo', 'HTML5-Boilerplate/html5-boilerplate',
         'mdn/learning-area', 'w3c/html', 'google/material-design-lite',
         'primer/css', 'PrismJS/prism', 'hakimel/reveal.js',
+        'puikinsh/gentelella', 'swagger-api/swagger-ui',
     ],
     'css': [
         'twbs/bootstrap', 'primer/css', 'jgthms/bulma', 'picocss/pico',
@@ -122,11 +150,14 @@ REPOS: dict[str, list[str]] = {
         'microsoft/vscode', 'DefinitelyTyped/DefinitelyTyped', 'json-schema-org/JSON-Schema-Test-Suite',
         'SchemaStore/schemastore', 'nodejs/node', 'facebook/react', 'sindresorhus/awesome',
         'vercel/next.js',
+        'npm/cli', 'oven-sh/bun', 'eslint/eslint', 'babel/babel',
     ],
     'yaml': [
         'kubernetes/kubernetes', 'ansible/ansible', 'helm/charts',
         'docker-library/official-images', 'github/gitignore', 'actions/starter-workflows',
         'prometheus/prometheus', 'grafana/grafana',
+        'fluxcd/flux2', 'GoogleCloudPlatform/microservices-demo',
+        'docker/awesome-compose', 'openshift/origin',
     ],
     'toml': [
         'rust-lang/cargo', 'rust-lang/rust', 'astral-sh/ruff', 'astral-sh/uv',
@@ -149,6 +180,7 @@ REPOS: dict[str, list[str]] = {
         'jessfraz/dockerfiles', 'docker-library/mysql', 'docker-library/mongo',
         'docker-library/openjdk', 'docker-library/rabbitmq', 'docker-library/wordpress',
         'docker-library/httpd', 'docker-library/memcached', 'docker-library/ghost',
+        'openfaas/faas', 'rancher/rancher',
     ],
     'graphql': [
         'graphql/graphql-js', 'apollographql/apollo-server', 'saleor/saleor',
@@ -157,6 +189,7 @@ REPOS: dict[str, list[str]] = {
         'strapi/strapi', 'hasura/graphql-engine', 'shopify/shopify-api-js',
         'artsy/metaphysics', 'graphql-hive/graphql-yoga', 'contentful/contentful.js',
         'wundergraph/wundergraph',
+        'dgraph-io/dgraph', 'prisma-labs/graphql-yoga', 'graphql-python/graphene',
     ],
     'hcl': [
         'terraform-aws-modules/terraform-aws-rds', 'terraform-aws-modules/terraform-aws-security-group',
@@ -169,6 +202,7 @@ REPOS: dict[str, list[str]] = {
     'dart': [
         'flutter/flutter', 'flutter/samples', 'dart-lang/sdk', 'rrousselGit/riverpod',
         'felangel/bloc', 'jonataslaw/getx', 'flutter/packages', 'dart-lang/http',
+        'simplezhli/flutter_deer', 'AppFlowy-IO/AppFlowy',
     ],
     'scala': [
         'apache/spark', 'scala/scala', 'akka/akka', 'playframework/playframework',
@@ -198,6 +232,108 @@ REPOS: dict[str, list[str]] = {
         'first20hours/google-10000-english', 'dwyl/english-words',
         'github/gitignore', 'spdx/license-list-data', 'nodejs/node',
         'python/cpython', 'torvalds/linux', 'git/git',
+        'rust-lang/rust', 'golang/go', 'kubernetes/kubernetes', 'facebook/react',
+        'django/django', 'rails/rails',
+    ],
+    'make': [
+        'torvalds/linux', 'git/git', 'redis/redis', 'tmux/tmux', 'gohugoio/hugo',
+        'buildroot/buildroot', 'openwrt/openwrt', 'gcc-mirror/gcc',
+    ],
+    'bat': [
+        'marlonrichert/zsh-autocomplete', 'chocolatey/choco', 'notepad-plus-plus/notepad-plus-plus',
+        'microsoft/vcpkg', 'git-for-windows/build-extra', 'conda/conda',
+        'conan-io/conan', 'openresty/openresty', 'microsoft/terminal',
+    ],
+    'cmake': [
+        'Kitware/CMake', 'opencv/opencv', 'assimp/assimp', 'protocolbuffers/protobuf',
+        'grpc/grpc', 'nlohmann/json', 'godotengine/godot', 'blender/blender',
+    ],
+    'objc': ['AFNetworking/AFNetworking', 'SDWebImage/SDWebImage', 'facebook/KVOController', 'BradLarson/GPUImage'],
+    'objcpp': [
+        'facebook/react-native', 'WebKit/WebKit', 'google/skia',
+        'flutter/engine', 'firebase/firebase-ios-sdk',
+    ],
+    'elisp': [
+        'hlissner/doom-emacs', 'magit/magit', 'melpa/melpa', 'purcell/emacs.d',
+        'emacs-mirror/emacs', 'jwiegley/use-package', 'magnars/dash.el',
+        'company-mode/company-mode', 'emacs-evil/evil',
+    ],
+    'viml': [
+        'tpope/vim-fugitive', 'junegunn/vim-plug', 'preservim/nerdtree', 'morhetz/gruvbox',
+        'vim/vim', 'preservim/tagbar', 'neoclide/coc.nvim',
+        'dense-analysis/ale', 'sheerun/vim-polyglot',
+        'itchyny/lightline.vim',
+    ],
+    'groovy': [
+        'apache/groovy', 'jenkinsci/jenkins', 'spockframework/spock', 'rundeck/rundeck',
+        'micronaut-projects/micronaut-core',
+    ],
+    'asm': [
+        'netwide-assembler/nasm', 'x64dbg/x64dbg', 'BLAKE3-team/BLAKE3',
+        'reactos/reactos', 'dotnet/runtime', 'openbsd/src',
+    ],
+    'glsl': [
+        'KhronosGroup/glTF-Sample-Viewer', 'patriciogonzalezvivo/glslViewer', 'mrdoob/three.js',
+        'libretro/glsl-shaders', 'KhronosGroup/Vulkan-Samples', 'ssloy/tinyrenderer',
+        'BabylonJS/Babylon.js', 'pixijs/pixijs',
+    ],
+    'hlsl': [
+        'microsoft/DirectXShaderCompiler', 'microsoft/DirectX-Graphics-Samples', 'gpuopen-librariesandsdks/Cauldron',
+        'walbourn/directx-sdk-samples', 'GPUOpen-Effects/FidelityFX-CACAO',
+    ],
+    'shaderlab': [
+        'keijiro/Kino', 'keijiro/PostProcessingUtilities', 'Unity-Technologies/PostProcessing',
+        'Unity-Technologies/VolumetricLighting', 'GarrettGunnell/Post-Processing',
+    ],
+    'plsql': [
+        'utPLSQL/utPLSQL', 'oracle-samples/oracle-db-examples', 'dimitri/pgloader', 'dalibo/pgbadger',
+        'oracle/oracle-db-examples', 'FSharp-org/plsql-examples',
+    ],
+    'tsql': ['microsoft/sql-server-samples', 'BrentOzarULTD/SQL-Server-First-Responder-Kit', 'dave-fancher/DataAccessGuide'],
+    'tcl': [
+        'flightaware/dump1090', 'antirez/redis', 'sqlite/sqlite',
+        'tcltk/tcl', 'tcltk/tk', 'tcltk/tcllib',
+    ],
+    'awk': [
+        'onetrueawk/awk', 'step-/JSON.awk', 'soimort/translate-shell', 'freebsd/freebsd',
+    ],
+    'starlark': [
+        'bazelbuild/bazel-skylib', 'bazelbuild/rules_go', 'bazelbuild/rules_docker',
+        'bazelbuild/bazel',
+    ],
+    'hack': [
+        'facebook/hhvm', 'hhvm/user-documentation', 'slackhq/hack-json-schema',
+        'facebook/flow',
+    ],
+    'gherkin': [
+        'cucumber/cucumber-js', 'cucumber/cucumber-jvm', 'cucumber/cucumber-ruby',
+        'behat/behat', 'cucumber/godog',
+    ],
+    'xslt': [
+        'martin-honnen/martin-honnen.github.io', 'highcharts/highcharts', 'apache/fop',
+        'docbook/xslt10-stylesheets', 'open-contracting/standard',
+        'saxonica/Saxon-HE', 'xmlunit/xmlunit', 'docbook/docbook-xsl',
+    ],
+    'smarty': [
+        'smarty-php/smarty', 'PrestaShop/PrestaShop', 'opencart/opencart',
+        'osTicket/osTicket', 'matyhtf/framework',
+    ],
+    'm4': [
+        'autoconf-archive/autoconf-archive', 'bminor/binutils-gdb', 'bminor/glibc',
+        'gcc-mirror/gcc', 'westes/flex',
+    ],
+    'lex': [
+        'westes/flex', 'postgres/postgres', 'FreeRDP/FreeRDP',
+        'akimd/bison', 'gcc-mirror/gcc',
+    ],
+    'yacc': [
+        'akimd/bison', 'graphviz/graphviz', 'tmux/tmux',
+        'postgres/postgres', 'westes/flex', 'gcc-mirror/gcc',
+    ],
+    'qmake': [
+        'qt/qtbase', 'notepad-plus-plus/notepad-plus-plus', 'telegramdesktop/tdesktop',
+        'qt/qtdeclarative', 'qt/qttools', 'qt/qtmultimedia',
+        'qt/qtcreator', 'qt/qtwebengine',
     ],
 }
 
@@ -205,4 +341,7 @@ REPOS: dict[str, list[str]] = {
 FILENAME_MATCH: dict[str, tuple[str, ...]] = {
     'dockerfile': ('dockerfile',),
     'plaintext': ('license', 'authors', 'notice', 'copying', 'contributors', 'changelog'),
+    'make': ('makefile', 'gnumakefile'),
+    'cmake': ('cmakelists.txt',),
+    'starlark': ('build', 'workspace'),
 }

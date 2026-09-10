@@ -56,7 +56,23 @@ def export_model(model: NeuralLexer, out_dir: str, verify: bool = True) -> dict:
         if not isinstance(mod, (QuantLinear, QuantEmbedding)):
             continue
         t = mod.export_tensors()
-        planes2d = pack_bitplanes(t['codes'], t['bits'])
+        codes = t['codes']
+        cols = t['shape'][1]
+        # The WGSL kernel addresses every "linear" tensor except the depthwise
+        # kernel (`.dw`, read scalar-by-scalar via wgt()) as `row * words_per_row`,
+        # which is only valid if each row starts on a 32-bit word boundary --
+        # true as long as every row is a multiple of 32 columns wide. film_rank
+        # dropping from 64 to 48 broke that for film.up without anyone touching
+        # the shader, since the dense bit-packing below has no row awareness of
+        # its own. Pad the row to the next word boundary with throwaway bits
+        # rather than relying on every future width staying 32-aligned by luck --
+        # the corresponding input is always masked to zero for the padding, so
+        # what the padding bits decode to cannot affect the result.
+        row_pad = 0
+        if t['kind'] == 'linear' and not name.endswith('.dw') and cols % 32 != 0:
+            row_pad = 32 - (cols % 32)
+            codes = np.pad(codes, ((0, 0), (0, row_pad)))
+        planes2d = pack_bitplanes(codes, t['bits'])
         packed = planes2d.ravel()
         entry = {
             'kind': t['kind'],
@@ -65,7 +81,7 @@ def export_model(model: NeuralLexer, out_dir: str, verify: bool = True) -> dict:
             'plane_offset': plane_off,
             'plane_count': int(packed.size),
             'words_per_plane': int(planes2d.shape[1]),
-            'words_per_row': t['shape'][1] // 32,  # 0 when the row is narrower than a word
+            'words_per_row': (cols + row_pad) // 32,  # 0 when the row is narrower than a word
         }
         planes.append(packed)
         plane_off += packed.size
@@ -113,6 +129,7 @@ def export_model(model: NeuralLexer, out_dir: str, verify: bool = True) -> dict:
             'dim': cfg.dim, 'embed_dim': cfg.embed_dim, 'n_layers': cfg.n_layers,
             'kernel_size': cfg.kernel_size, 'head_hidden': cfg.head_hidden,
             'num_classes': cfg.num_classes,
+            'dilations': list(getattr(cfg, 'dilations', (1, 2, 4))),
         },
         'field_sizes': dict(FIELD_SIZES),
         'field_offsets': model.embedding.field_offsets,
@@ -166,7 +183,12 @@ def dequant_tensor(meta: dict, planes: np.ndarray, f16: np.ndarray,
     bits = t['bits']
     packed = planes[t['plane_offset']:t['plane_offset'] + t['plane_count']]
     packed = packed.reshape(bits, t['words_per_plane'])
-    codes = unpack_bitplanes(packed, bits, rows, cols)
+    # words_per_row*32 is the padded row width when export.py row-aligned this
+    # tensor (see export_model); for anything unpadded (words_per_row is 0 for
+    # a row narrower than one word, e.g. the depthwise kernel) that is smaller
+    # than the true width, so fall back to the true width instead.
+    padded_cols = max(cols, t.get('words_per_row', 0) * 32)
+    codes = unpack_bitplanes(packed, bits, rows, padded_cols)[:, :cols]
     scales = f16[t['scale_offset']:t['scale_offset'] + t['scale_count']].astype(np.float32)
     if 'group_sizes' in t:
         scales = np.repeat(scales, t['group_sizes'])

@@ -10,7 +10,7 @@ const KSIZE: u32 = 5u;
 const TILE: u32 = 16u;
 const TILE_POOL: u32 = 4u;
 const MAX_JOBS: u32 = 64u;
-const NREG: u32 = 7u;
+const NREG: u32 = 8u;
 const EMB_P: u32 = 0u;
 const EMB_W: u32 = 1012u;
 const EMB_B: u32 = 3u;
@@ -21,39 +21,42 @@ const UP_B: u32 = 1u;
 const UP_S: u32 = 11u;
 const UP_BI: u32 = 75u;
 const FD_P: u32 = 3100u;
-const FD_W: u32 = 256u;
+const FD_W: u32 = 192u;
 const FD_B: u32 = 1u;
 const FD_S: u32 = 139u;
-const FD_BI: u32 = 203u;
-const FU_P: u32 = 3356u;
+const FD_BI: u32 = 187u;
+const FU_P: u32 = 3292u;
 const FU_W: u32 = 768u;
 const FU_B: u32 = 1u;
-const FU_S: u32 = 267u;
-const FU_BI: u32 = 651u;
-const GS_P: u32 = 5780u;
+const FU_S: u32 = 235u;
+const FU_BI: u32 = 619u;
+const GS_P: u32 = 5716u;
 const GS_W: u32 = 512u;
 const GS_B: u32 = 1u;
-const GS_S: u32 = 2571u;
-const GS_BI: u32 = 2635u;
-const GG_P: u32 = 6292u;
+const GS_S: u32 = 2539u;
+const GS_BI: u32 = 2603u;
+const GG_P: u32 = 6228u;
 const GG_W: u32 = 128u;
 const GG_B: u32 = 1u;
-const GG_S: u32 = 2699u;
-const GG_BI: u32 = 2763u;
-const HH_P: u32 = 6420u;
+const GG_S: u32 = 2667u;
+const GG_BI: u32 = 2731u;
+const HH_P: u32 = 6356u;
 const HH_W: u32 = 384u;
 const HH_B: u32 = 1u;
-const HH_S: u32 = 2827u;
-const HH_BI: u32 = 2923u;
-const HO_P: u32 = 6804u;
+const HH_S: u32 = 2795u;
+const HH_BI: u32 = 2891u;
+const HO_P: u32 = 6740u;
 const HO_W: u32 = 27u;
 const HO_B: u32 = 1u;
-const HO_S: u32 = 3019u;
-const HO_BI: u32 = 3028u;
-const HNORM_F: u32 = 4125u;
-const FS_F: u32 = 3037u;
-const FN_F: u32 = 3229u;
+const HO_S: u32 = 2987u;
+const HO_BI: u32 = 2996u;
+const HNORM_F: u32 = 4542u;
+const FS_F: u32 = 3006u;
+const FN_F: u32 = 3198u;
 const NLAYER: u32 = 3u;
+const FILM_RANK: u32 = 48u;
+const DG_F: u32 = 4478u;
+const HW_F: u32 = 3005u;
 const FIELD_ROW: array<u32, 10> = array<u32, 10>(0u, 4u, 12u, 140u, 268u, 780u, 908u, 924u, 940u, 972u);
 const FLAG_ROW: u32 = 1004u;
 const NFIELD: u32 = 10u;
@@ -93,6 +96,9 @@ var<workgroup> lg  : array<f32, 144>;    // TILE x NCLASS
 // already 1.0 in f32.
 fn tanh_s(x: f32) -> f32 { return tanh(clamp(x, -15.0, 15.0)); }
 fn sigmoid_s(x: f32) -> f32 { return 1.0 / (1.0 + exp(-clamp(x, -30.0, 30.0))); }
+// Matches torch.nn.functional.softplus's numerically-stable form: linear past
+// the point where exp(x) would overflow or the log1p term becomes a no-op.
+fn softplus_s(x: f32) -> f32 { return select(log(1.0 + exp(x)), x, x > 20.0); }
 
 // k-bit weight from bit-planes. Used only where the row index depends on data:
 // the embedding table and the depthwise kernel.
@@ -194,6 +200,7 @@ fn embed(@builtin(local_invocation_id) lid: vec3<u32>,
     let T = job.token_count;
     let off = job.token_offset;
     let hbase = job.stride * wid.y;
+    let r_xorig = NREG * job.stride * wid.y + 7u * job.stride;
     let base_t = wid.x * TILE;
 
     let up_w = planes[UP_P + d];
@@ -227,7 +234,11 @@ fn embed(@builtin(local_invocation_id) lid: vec3<u32>,
     workgroupBarrier();
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
-        if (t < T) { hid[hbase + t * DIM + d] = up_b + up_s * dotA32(up_w, j * EDIM); }
+        if (t < T) {
+            let v = up_b + up_s * dotA32(up_w, j * EDIM);
+            hid[hbase + t * DIM + d] = v;
+            scratch[r_xorig + t * DIM + d] = v;
+        }
     }
 }
 
@@ -279,9 +290,13 @@ fn film(@builtin(local_invocation_id) lid: vec3<u32>,
     tA[d] = n0;
     tA[DIM + d] = n1;
     workgroupBarrier();
-    red[d] = tanh_s(fp[FD_BI + d] + fp[FD_S + d] * dotA128(
-        planes[FD_P + d * 4u], planes[FD_P + d * 4u + 1u],
-        planes[FD_P + d * 4u + 2u], planes[FD_P + d * 4u + 3u], 0u));
+    if (d < FILM_RANK) {
+        red[d] = tanh_s(fp[FD_BI + d] + fp[FD_S + d] * dotA128(
+            planes[FD_P + d * 4u], planes[FD_P + d * 4u + 1u],
+            planes[FD_P + d * 4u + 2u], planes[FD_P + d * 4u + 3u], 0u));
+    } else {
+        red[d] = 0.0;
+    }
     workgroupBarrier();
 
     // 2 * DIM outputs per layer, spread across the 64 threads.
@@ -314,7 +329,7 @@ fn l0_pre(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_film = sbase + 6u * job.stride;
     let base_t = wid.x * TILE;
 
-    let gain = fp[3549u + d];
+    let gain = fp[3646u + d];
     // FiLM for this layer: scale and shift produced from the document signature.
     let gamma = scratch[r_film + 2u * DIM + (0u * 2u + 0u) * DIM + d];
     let beta = scratch[r_film + 2u * DIM + (0u * 2u + 1u) * DIM + d];
@@ -347,19 +362,19 @@ fn l0_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_b = sbase + job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[4164u + d * 2u];
-    let pic1 = planes[4164u + d * 2u + 1u];
-    let pig0 = planes[4164u + (DIM + d) * 2u];
-    let pig1 = planes[4164u + (DIM + d) * 2u + 1u];
-    let sc = fp[1163u + d];
-    let sg = fp[1163u + DIM + d];
-    let bc = fp[1291u + d];
-    let bg = fp[1291u + DIM + d];
-    let dbias = fp[1099u + d];
-    let dws = fp[1035u + d];
+    let pic0 = planes[4100u + d * 2u];
+    let pic1 = planes[4100u + d * 2u + 1u];
+    let pig0 = planes[4100u + (DIM + d) * 2u];
+    let pig1 = planes[4100u + (DIM + d) * 2u + 1u];
+    let sc = fp[1131u + d];
+    let sg = fp[1131u + DIM + d];
+    let bc = fp[1259u + d];
+    let bg = fp[1259u + DIM + d];
+    let dbias = fp[1067u + d];
+    let dws = fp[1003u + d];
     var dwv: array<f32, 5>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(4124u, 10u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(4060u, 10u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -368,7 +383,7 @@ fn l0_conv(@builtin(local_invocation_id) lid: vec3<u32>,
         if (t < T) {
             acc = dbias;
             for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-                let o = i32(t) + i32(k) - i32(KSIZE / 2u);
+                let o = i32(t) + (i32(k) - i32(KSIZE / 2u)) * 1;
                 if (o >= 0 && o < i32(T)) {
                     acc = acc + dwv[k] * scratch[r_nrm + u32(o) * DIM + d];
                 }
@@ -387,8 +402,7 @@ fn l0_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     }
 }
 
-// One workgroup: the recurrence is 0.8% of the layer's arithmetic and is
-// sequential in t, so spreading it would cost more in carries than it saves.
+
 @compute @workgroup_size(64)
 fn l0_scan(@builtin(local_invocation_id) lid: vec3<u32>,
              @builtin(workgroup_id) wid: vec3<u32>) {
@@ -400,20 +414,27 @@ fn l0_scan(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_fw = sbase + 2u * job.stride;
     let r_bw = sbase + 3u * job.stride;
 
-    let af = sigmoid_s(fp[3421u + d]);
-    let ab = sigmoid_s(fp[3485u + d]);
+    let decay_f = fp[3390u + d];
+    let decay_b = fp[3454u + d];
+    let rf = softplus_s(fp[3518u + d]);
+    let rb = softplus_s(fp[3582u + d]);
     var hf: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
-        hf = af * hf + scratch[r_b + t * DIM + d];
+        let bt = scratch[r_b + t * DIM + d];
+        let aft = sigmoid_s(decay_f - rf * abs(bt));
+        hf = aft * hf + bt;
         scratch[r_fw + t * DIM + d] = hf;
     }
     var hb: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
         let ti = T - 1u - t;
-        hb = ab * hb + scratch[r_b + ti * DIM + d];
+        let bt = scratch[r_b + ti * DIM + d];
+        let abt = sigmoid_s(decay_b - rb * abs(bt));
+        hb = abt * hb + bt;
         scratch[r_bw + ti * DIM + d] = hb;
     }
 }
+
 
 @compute @workgroup_size(64)
 fn l0_post(@builtin(local_invocation_id) lid: vec3<u32>,
@@ -427,13 +448,13 @@ fn l0_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[4420u + d * 4u];
-    let po1 = planes[4420u + d * 4u + 1u];
-    let po2 = planes[4420u + d * 4u + 2u];
-    let po3 = planes[4420u + d * 4u + 3u];
-    let spo = fp[1419u + d];
-    let bpo = fp[1483u + d];
-    let og = sigmoid_s(fp[3357u + d]);
+    let po0 = planes[4356u + d * 4u];
+    let po1 = planes[4356u + d * 4u + 1u];
+    let po2 = planes[4356u + d * 4u + 2u];
+    let po3 = planes[4356u + d * 4u + 3u];
+    let spo = fp[1387u + d];
+    let bpo = fp[1451u + d];
+    let og = sigmoid_s(fp[3326u + d]);
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
@@ -467,7 +488,7 @@ fn l1_pre(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_film = sbase + 6u * job.stride;
     let base_t = wid.x * TILE;
 
-    let gain = fp[3805u + d];
+    let gain = fp[4030u + d];
     // FiLM for this layer: scale and shift produced from the document signature.
     let gamma = scratch[r_film + 2u * DIM + (1u * 2u + 0u) * DIM + d];
     let beta = scratch[r_film + 2u * DIM + (1u * 2u + 1u) * DIM + d];
@@ -500,19 +521,19 @@ fn l1_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_b = sbase + job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[4716u + d * 2u];
-    let pic1 = planes[4716u + d * 2u + 1u];
-    let pig0 = planes[4716u + (DIM + d) * 2u];
-    let pig1 = planes[4716u + (DIM + d) * 2u + 1u];
-    let sc = fp[1675u + d];
-    let sg = fp[1675u + DIM + d];
-    let bc = fp[1803u + d];
-    let bg = fp[1803u + DIM + d];
-    let dbias = fp[1611u + d];
-    let dws = fp[1547u + d];
+    let pic0 = planes[4652u + d * 2u];
+    let pic1 = planes[4652u + d * 2u + 1u];
+    let pig0 = planes[4652u + (DIM + d) * 2u];
+    let pig1 = planes[4652u + (DIM + d) * 2u + 1u];
+    let sc = fp[1643u + d];
+    let sg = fp[1643u + DIM + d];
+    let bc = fp[1771u + d];
+    let bg = fp[1771u + DIM + d];
+    let dbias = fp[1579u + d];
+    let dws = fp[1515u + d];
     var dwv: array<f32, 5>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(4676u, 10u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(4612u, 10u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -521,7 +542,7 @@ fn l1_conv(@builtin(local_invocation_id) lid: vec3<u32>,
         if (t < T) {
             acc = dbias;
             for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-                let o = i32(t) + i32(k) - i32(KSIZE / 2u);
+                let o = i32(t) + (i32(k) - i32(KSIZE / 2u)) * 2;
                 if (o >= 0 && o < i32(T)) {
                     acc = acc + dwv[k] * scratch[r_nrm + u32(o) * DIM + d];
                 }
@@ -540,8 +561,7 @@ fn l1_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     }
 }
 
-// One workgroup: the recurrence is 0.8% of the layer's arithmetic and is
-// sequential in t, so spreading it would cost more in carries than it saves.
+
 @compute @workgroup_size(64)
 fn l1_scan(@builtin(local_invocation_id) lid: vec3<u32>,
              @builtin(workgroup_id) wid: vec3<u32>) {
@@ -553,20 +573,27 @@ fn l1_scan(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_fw = sbase + 2u * job.stride;
     let r_bw = sbase + 3u * job.stride;
 
-    let af = sigmoid_s(fp[3677u + d]);
-    let ab = sigmoid_s(fp[3741u + d]);
+    let decay_f = fp[3774u + d];
+    let decay_b = fp[3838u + d];
+    let rf = softplus_s(fp[3902u + d]);
+    let rb = softplus_s(fp[3966u + d]);
     var hf: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
-        hf = af * hf + scratch[r_b + t * DIM + d];
+        let bt = scratch[r_b + t * DIM + d];
+        let aft = sigmoid_s(decay_f - rf * abs(bt));
+        hf = aft * hf + bt;
         scratch[r_fw + t * DIM + d] = hf;
     }
     var hb: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
         let ti = T - 1u - t;
-        hb = ab * hb + scratch[r_b + ti * DIM + d];
+        let bt = scratch[r_b + ti * DIM + d];
+        let abt = sigmoid_s(decay_b - rb * abs(bt));
+        hb = abt * hb + bt;
         scratch[r_bw + ti * DIM + d] = hb;
     }
 }
+
 
 @compute @workgroup_size(64)
 fn l1_post(@builtin(local_invocation_id) lid: vec3<u32>,
@@ -580,13 +607,13 @@ fn l1_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[4972u + d * 4u];
-    let po1 = planes[4972u + d * 4u + 1u];
-    let po2 = planes[4972u + d * 4u + 2u];
-    let po3 = planes[4972u + d * 4u + 3u];
-    let spo = fp[1931u + d];
-    let bpo = fp[1995u + d];
-    let og = sigmoid_s(fp[3613u + d]);
+    let po0 = planes[4908u + d * 4u];
+    let po1 = planes[4908u + d * 4u + 1u];
+    let po2 = planes[4908u + d * 4u + 2u];
+    let po3 = planes[4908u + d * 4u + 3u];
+    let spo = fp[1899u + d];
+    let bpo = fp[1963u + d];
+    let og = sigmoid_s(fp[3710u + d]);
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
@@ -620,7 +647,7 @@ fn l2_pre(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_film = sbase + 6u * job.stride;
     let base_t = wid.x * TILE;
 
-    let gain = fp[4061u + d];
+    let gain = fp[4414u + d];
     // FiLM for this layer: scale and shift produced from the document signature.
     let gamma = scratch[r_film + 2u * DIM + (2u * 2u + 0u) * DIM + d];
     let beta = scratch[r_film + 2u * DIM + (2u * 2u + 1u) * DIM + d];
@@ -653,19 +680,19 @@ fn l2_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_b = sbase + job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[5268u + d * 2u];
-    let pic1 = planes[5268u + d * 2u + 1u];
-    let pig0 = planes[5268u + (DIM + d) * 2u];
-    let pig1 = planes[5268u + (DIM + d) * 2u + 1u];
-    let sc = fp[2187u + d];
-    let sg = fp[2187u + DIM + d];
-    let bc = fp[2315u + d];
-    let bg = fp[2315u + DIM + d];
-    let dbias = fp[2123u + d];
-    let dws = fp[2059u + d];
+    let pic0 = planes[5204u + d * 2u];
+    let pic1 = planes[5204u + d * 2u + 1u];
+    let pig0 = planes[5204u + (DIM + d) * 2u];
+    let pig1 = planes[5204u + (DIM + d) * 2u + 1u];
+    let sc = fp[2155u + d];
+    let sg = fp[2155u + DIM + d];
+    let bc = fp[2283u + d];
+    let bg = fp[2283u + DIM + d];
+    let dbias = fp[2091u + d];
+    let dws = fp[2027u + d];
     var dwv: array<f32, 5>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(5228u, 10u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(5164u, 10u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -674,7 +701,7 @@ fn l2_conv(@builtin(local_invocation_id) lid: vec3<u32>,
         if (t < T) {
             acc = dbias;
             for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-                let o = i32(t) + i32(k) - i32(KSIZE / 2u);
+                let o = i32(t) + (i32(k) - i32(KSIZE / 2u)) * 4;
                 if (o >= 0 && o < i32(T)) {
                     acc = acc + dwv[k] * scratch[r_nrm + u32(o) * DIM + d];
                 }
@@ -693,8 +720,7 @@ fn l2_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     }
 }
 
-// One workgroup: the recurrence is 0.8% of the layer's arithmetic and is
-// sequential in t, so spreading it would cost more in carries than it saves.
+
 @compute @workgroup_size(64)
 fn l2_scan(@builtin(local_invocation_id) lid: vec3<u32>,
              @builtin(workgroup_id) wid: vec3<u32>) {
@@ -706,20 +732,27 @@ fn l2_scan(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_fw = sbase + 2u * job.stride;
     let r_bw = sbase + 3u * job.stride;
 
-    let af = sigmoid_s(fp[3933u + d]);
-    let ab = sigmoid_s(fp[3997u + d]);
+    let decay_f = fp[4158u + d];
+    let decay_b = fp[4222u + d];
+    let rf = softplus_s(fp[4286u + d]);
+    let rb = softplus_s(fp[4350u + d]);
     var hf: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
-        hf = af * hf + scratch[r_b + t * DIM + d];
+        let bt = scratch[r_b + t * DIM + d];
+        let aft = sigmoid_s(decay_f - rf * abs(bt));
+        hf = aft * hf + bt;
         scratch[r_fw + t * DIM + d] = hf;
     }
     var hb: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
         let ti = T - 1u - t;
-        hb = ab * hb + scratch[r_b + ti * DIM + d];
+        let bt = scratch[r_b + ti * DIM + d];
+        let abt = sigmoid_s(decay_b - rb * abs(bt));
+        hb = abt * hb + bt;
         scratch[r_bw + ti * DIM + d] = hb;
     }
 }
+
 
 @compute @workgroup_size(64)
 fn l2_post(@builtin(local_invocation_id) lid: vec3<u32>,
@@ -733,13 +766,13 @@ fn l2_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[5524u + d * 4u];
-    let po1 = planes[5524u + d * 4u + 1u];
-    let po2 = planes[5524u + d * 4u + 2u];
-    let po3 = planes[5524u + d * 4u + 3u];
-    let spo = fp[2443u + d];
-    let bpo = fp[2507u + d];
-    let og = sigmoid_s(fp[3869u + d]);
+    let po0 = planes[5460u + d * 4u];
+    let po1 = planes[5460u + d * 4u + 1u];
+    let po2 = planes[5460u + d * 4u + 2u];
+    let po3 = planes[5460u + d * 4u + 3u];
+    let spo = fp[2411u + d];
+    let bpo = fp[2475u + d];
+    let og = sigmoid_s(fp[4094u + d]);
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
@@ -760,10 +793,6 @@ fn l2_post(@builtin(local_invocation_id) lid: vec3<u32>,
 
 
 // ---- file-scale context ----------------------------------------------------
-// Four pooled views: mean and max are constant across the sequence; the prefix
-// and suffix means vary with position, which is what lets the model tell "this
-// identifier was declared earlier" from "it appears out of nowhere". The running
-// sums are sequential in t, so they share the single-workgroup pass.
 @compute @workgroup_size(64)
 fn pool_reduce(@builtin(local_invocation_id) lid: vec3<u32>,
                @builtin(workgroup_id) wid: vec3<u32>) {
@@ -776,13 +805,19 @@ fn pool_reduce(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_suf = sbase + job.stride;          // reuses the scan-input region
     let r_stat = sbase + 5u * job.stride;
 
-    var s: f32 = 0.0;
+    let dgw = fp[4478u + d];
+    var s: f32 = 0.0;    // plain sum, still feeds the sequence-mean stat below
+    var sg: f32 = 0.0;   // decl-gated sum, feeds the prefix mean only
+    var sdg: f32 = 0.0;
     var mx: f32 = -3.4e38;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
         let v = hid[hbase + t * DIM + d];
         s = s + v;
         mx = max(mx, v);
-        scratch[r_pre + t * DIM + d] = s / f32(t + 1u);
+        let dg = sigmoid_s(v * dgw);
+        sg = sg + v * dg;
+        sdg = sdg + dg;
+        scratch[r_pre + t * DIM + d] = sg / max(1.0, sdg);
     }
     var sb: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
@@ -793,6 +828,7 @@ fn pool_reduce(@builtin(local_invocation_id) lid: vec3<u32>,
     scratch[r_stat + d] = s / max(1.0, f32(T));
     scratch[r_stat + DIM + d] = mx;
 }
+
 
 @compute @workgroup_size(64)
 fn pool_apply(@builtin(local_invocation_id) lid: vec3<u32>,
@@ -864,6 +900,7 @@ fn head(@builtin(local_invocation_id) lid: vec3<u32>,
     let hbase = job.stride * wid.y;
     let sbase = NREG * job.stride * wid.y;
     let r_ctx = sbase + 4u * job.stride;
+    let r_xorig = sbase + 7u * job.stride;
     let base_t = wid.x * TILE;
 
     let hgain = fp[HNORM_F + d];
@@ -889,9 +926,16 @@ fn head(@builtin(local_invocation_id) lid: vec3<u32>,
         ho2 = planes[HO_P + d * 3u + 2u];
     }
 
+    // The pre-layer embedding folded back in at strength fp[HW_F] -- zero
+    // unless the checkpoint has a highway_scale parameter, in which case it
+    // gives the classifier a direct path to the raw token identity alongside
+    // whatever the recurrent layers built on top of it.
+    let hw: f32 = fp[HW_F];
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
-        tA[j * DIM + d] = select(0.0, hid[hbase + t * DIM + d], t < T);
+        let xv = select(0.0, hid[hbase + t * DIM + d], t < T);
+        let xo = select(0.0, scratch[r_xorig + t * DIM + d], t < T);
+        tA[j * DIM + d] = xv + hw * xo;
     }
     workgroupBarrier();
     tile_rms(d, TILE);

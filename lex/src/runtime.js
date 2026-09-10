@@ -27,8 +27,9 @@ const JOB_BYTES = 16;  // Job { token_count, token_offset, stage, stride }
 // so a larger burst of calls is flushed in chunks rather than one dispatch.
 const MAX_JOBS = 64;
 // Scratch regions per job: normalized input, scan input, forward and backward
-// scan results, gated context, pooled statistics, and the FiLM parameters.
-const SCRATCH_REGIONS = 7;
+// scan results, gated context, pooled statistics, the FiLM parameters, and the
+// pre-layer embedding kept around for the highway connection.
+const SCRATCH_REGIONS = 8;
 
 function align(n, a) {
   return Math.ceil(n / a) * a;

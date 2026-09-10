@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "capture": "echo \"with `npm run dev` running, open http://localhost:5173/capture.html \u2014 it writes src/results.json\""
+    "capture": "echo \"with `bun run dev` running, open http://localhost:5173/capture.html \u2014 it writes src/results.json\""
   },
   "dependencies": {
     "gpu-lexer": "^0.0.2",

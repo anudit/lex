@@ -75,17 +75,24 @@ class LexerConfig:
     n_layers: int = 3
     head_hidden: int = 96
     num_classes: int = 9
-    # Decay timescales, as retention per step. A single initialization at 0.9
-    # gives every channel a ~10-token memory, which cannot represent "a block
-    # comment opened 300 tokens ago". Spreading the channels geometrically over
-    # this range gives the layer both local and file-scale memory from the start;
-    # training moves them, but only from wherever they were initialized.
-    decay_min: float = 0.5     # ~2 tokens
-    decay_max: float = 0.995   # ~200 tokens
+    # Asymmetric decay timescales: forward channels span 10-500 tokens for long-range
+    # syntax retention; backward channels span 1.5-15 tokens for sharp local lookahead.
+    decay_f_min: float = 0.90   # ~10 tokens
+    decay_f_max: float = 0.998  # ~500 tokens
+    decay_b_min: float = 0.20   # ~1.2 tokens
+    decay_b_max: float = 0.93   # ~15 tokens
+    decay_min: float = 0.5      # fallback for symmetric
+    decay_max: float = 0.995    # fallback for symmetric
+    # Dilated depthwise convolution rates per layer: expands receptive field from +-2
+    # to +-14 tokens at zero parameter cost.
+    dilations: tuple[int, ...] = (1, 2, 4)
     # Rank of the FiLM projection from the document signature to per-layer
-    # scale/shift. Full rank costs ~7.7 KB packed; 64 buys the same conditioning
-    # for ~5.5 KB. Zero disables conditioning entirely, for ablation.
-    film_rank: int = 64
+    # scale/shift. 48 buys full conditioning for ~4.2 KB packed.
+    film_rank: int = 48
+    # Architectural trick flags (all initialized for seamless backward-compatible start):
+    use_dynamic_reset: bool = True   # state-dependent decay reset
+    use_decl_gate: bool = True       # declaration-biased prefix in GlobalContext
+    use_highway: bool = True         # embedding-to-head direct highway
 
     def rows(self) -> int:
         return sum(FIELD_SIZES.values()) + N_FLAG_BITS
@@ -188,18 +195,13 @@ class GlobalContext(nn.Module):
       max         -- did a construct like an unterminated string appear anywhere
       prefix mean -- what has been seen *before* this token
       suffix mean -- what comes after it
-
-    The first two are constant across the sequence. A single global average
-    cannot say whether a given identifier was declared earlier, which is exactly
-    the call `type` gets wrong -- it leaks 8.7% into `plain`. The prefix and
-    suffix means vary with position and are still length-invariant, so a
-    40-token snippet and a 4000-token file behave the same way.
     """
 
     def __init__(self, cfg: LexerConfig):
         super().__init__()
         self.summary = QuantLinear(cfg.dim * 4, cfg.dim, bits=cfg.proj_bits)
         self.gate = QuantLinear(cfg.dim, cfg.dim, bits=cfg.proj_bits)
+        self.decl_gate = nn.Parameter(torch.zeros(cfg.dim)) if getattr(cfg, 'use_decl_gate', False) else None
 
     def forward(self, x: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
         m = valid.unsqueeze(-1).to(x.dtype)
@@ -209,10 +211,13 @@ class GlobalContext(nn.Module):
         mx = x.masked_fill(~valid.unsqueeze(-1), float('-inf')).amax(dim=1, keepdim=True)
         mx = torch.nan_to_num(mx, neginf=0.0).expand_as(x)
 
-        # Running means, normalized by the count of valid positions so far, so
-        # neither padding nor sequence length changes their scale.
-        counts = m.cumsum(dim=1).clamp_min(1.0)
-        prefix = xm.cumsum(dim=1) / counts
+        if self.decl_gate is not None:
+            dg = torch.sigmoid(x * self.decl_gate)
+            prefix = (xm * dg).cumsum(dim=1) / (m * dg).cumsum(dim=1).clamp_min(1.0)
+        else:
+            counts = m.cumsum(dim=1).clamp_min(1.0)
+            prefix = xm.cumsum(dim=1) / counts
+
         rcounts = m.flip(1).cumsum(dim=1).flip(1).clamp_min(1.0)
         suffix = xm.flip(1).cumsum(dim=1).flip(1) / rcounts
 
@@ -238,23 +243,12 @@ class DocSignature(nn.Module):
 
 
 class FiLM(nn.Module):
-    """Per-layer, per-channel scale and shift derived from the document signature.
-
-    Low-rank because the full projection does not fit the size budget. Each layer
-    starts as the identity: `strength` is initialized to zero, so conditioning is
-    switched off until training finds a use for it, which keeps the early epochs
-    behaving exactly like the unconditioned model.
-    """
+    """Per-layer, per-channel scale and shift derived from the document signature."""
 
     def __init__(self, cfg: LexerConfig):
         super().__init__()
         self.dim = cfg.dim
         self.n_layers = cfg.n_layers
-        # The signature arrives with mean |x| around 2.4, which drives the
-        # projection below into tanh saturation -- measured at 59% of units pinned
-        # past 0.99, so most of the low-rank code was the same for every document
-        # and the conditioning could not tell them apart. Normalizing first keeps
-        # the code in the responsive part of the curve.
         self.norm = nn.RMSNorm(cfg.dim * 2)
         self.down = QuantLinear(cfg.dim * 2, cfg.film_rank, bits=cfg.proj_bits)
         self.up = QuantLinear(cfg.film_rank, cfg.n_layers * 2 * cfg.dim,
@@ -274,35 +268,41 @@ class FiLM(nn.Module):
 
 
 class BidiGLUBlock(nn.Module):
-    """Depthwise local context, then a bidirectional gated linear recurrence."""
+    """Depthwise local context with dilation, then a bidirectional gated linear recurrence with reset."""
 
-    def __init__(self, cfg: LexerConfig):
+    def __init__(self, cfg: LexerConfig, dilation: int = 1):
         super().__init__()
         d = cfg.dim
         self.norm = nn.RMSNorm(d)
         self.dw = QuantLinear(cfg.kernel_size, d, bits=cfg.conv_bits, bias=True)
         self.kernel_size = cfg.kernel_size
+        self.dilation = dilation
         self.proj_in = QuantLinear(d, d * 2, bits=cfg.proj_bits)
         self.proj_out = QuantLinear(d * 2, d, bits=cfg.proj_bits)
-        # Per-channel output gate. A full d x d gate matrix costs ~0.6 KB packed
-        # for a job a scalar per channel does just as well.
         self.out_gate = nn.Parameter(torch.zeros(d))
-        # Decays are stored as logits; init near 0.9 forward / 0.9 backward gives
-        # a receptive field of ~10 tokens before training moves them.
-        # Decay logits, initialized across a geometric range of timescales
-        # rather than all at one value -- see LexerConfig.decay_min/decay_max.
-        init = _decay_logits(d, cfg.decay_min, cfg.decay_max)
-        self.decay_f = nn.Parameter(init.clone())
-        self.decay_b = nn.Parameter(init.clone())
+
+        f_min = getattr(cfg, 'decay_f_min', cfg.decay_min)
+        f_max = getattr(cfg, 'decay_f_max', cfg.decay_max)
+        b_min = getattr(cfg, 'decay_b_min', cfg.decay_min)
+        b_max = getattr(cfg, 'decay_b_max', cfg.decay_max)
+        init_f = _decay_logits(d, f_min, f_max)
+        init_b = _decay_logits(d, b_min, b_max)
+        self.decay_f = nn.Parameter(init_f.clone())
+        self.decay_b = nn.Parameter(init_b.clone())
+        if getattr(cfg, 'use_dynamic_reset', False):
+            self.reset_f = nn.Parameter(torch.full((d,), -4.0))
+            self.reset_b = nn.Parameter(torch.full((d,), -4.0))
+        else:
+            self.reset_f = None
+            self.reset_b = None
 
     def _depthwise(self, h: torch.Tensor) -> torch.Tensor:
-        # Depthwise conv expressed as a quantized (dim, kernel) weight so it goes
-        # through the same quantizer and exporter as every other tensor.
         k = self.kernel_size
+        dil = self.dilation
         w = self.dw.effective()                       # (dim, k)
-        pad = k // 2
+        pad = (k // 2) * dil
         hp = F.pad(h.transpose(1, 2), (pad, pad))     # (B, dim, T + 2p)
-        taps = hp.unfold(-1, k, 1)                    # (B, dim, T, k)
+        taps = hp.unfold(-1, (k - 1) * dil + 1, 1)[:, :, :, ::dil]  # (B, dim, T, k)
         out = (taps * w.view(1, -1, 1, k)).sum(-1)
         return (out + self.dw.bias.view(1, -1, 1)).transpose(1, 2)
 
@@ -310,19 +310,22 @@ class BidiGLUBlock(nn.Module):
                 film: tuple[torch.Tensor, torch.Tensor] | None = None) -> torch.Tensor:
         h = self.norm(x)
         if film is not None:
-            # Applied after normalization and before everything else in the
-            # block, so the document signature reaches the depthwise conv and the
-            # recurrence rather than only the classifier.
             gamma, beta = film
             h = h * gamma + beta
         h = self._depthwise(h)
         cand, gate = self.proj_in(h).chunk(2, dim=-1)
         b = torch.tanh(cand) * torch.sigmoid(gate)
-        # Padding must not leak into the scan state.
         b = b * valid.unsqueeze(-1).to(b.dtype)
 
-        a_f = torch.sigmoid(self.decay_f).view(1, 1, -1).expand_as(b)
-        a_b = torch.sigmoid(self.decay_b).view(1, 1, -1).expand_as(b)
+        if self.reset_f is not None:
+            rf = F.softplus(self.reset_f).view(1, 1, -1)
+            rb = F.softplus(self.reset_b).view(1, 1, -1)
+            a_f = torch.sigmoid(self.decay_f.view(1, 1, -1) - rf * torch.abs(b))
+            a_b = torch.sigmoid(self.decay_b.view(1, 1, -1) - rb * torch.abs(b))
+        else:
+            a_f = torch.sigmoid(self.decay_f).view(1, 1, -1).expand_as(b)
+            a_b = torch.sigmoid(self.decay_b).view(1, 1, -1).expand_as(b)
+
         fwd = assoc_scan(a_f, b)
         bwd = assoc_scan(a_b.flip(1), b.flip(1)).flip(1)
 
@@ -338,9 +341,14 @@ class NeuralLexer(nn.Module):
         self.embedding = FeatureEmbedding(c)
         self.signature = DocSignature()
         self.film = FiLM(c) if c.film_rank > 0 else None
-        self.layers = nn.ModuleList([BidiGLUBlock(c) for _ in range(c.n_layers)])
+        dils = getattr(c, 'dilations', (1, 2, 4))
+        self.layers = nn.ModuleList([
+            BidiGLUBlock(c, dilation=dils[i] if i < len(dils) else 1)
+            for i in range(c.n_layers)
+        ])
         self.global_ctx = GlobalContext(c)
         self.head_norm = nn.RMSNorm(c.dim)
+        self.highway_scale = nn.Parameter(torch.zeros(1)) if getattr(c, 'use_highway', False) else None
         self.head_hidden = QuantLinear(c.dim * 2, c.head_hidden, bits=c.head_bits)
         self.head_out = QuantLinear(c.head_hidden, c.num_classes, bits=c.head_bits)
 
@@ -350,12 +358,16 @@ class NeuralLexer(nn.Module):
         if valid is None:
             valid = torch.ones_like(feats['kind'], dtype=torch.bool)
         x = self.embedding(feats)
+        x_orig = x
         sig = self.signature(x, valid)
         films = self.film(sig) if self.film is not None else [None] * len(self.layers)
         for layer, film in zip(self.layers, films):
             x = layer(x, valid, film)
         ctx = self.global_ctx(x, valid)
-        h = self.head_norm(x)
+        if self.highway_scale is not None:
+            h = self.head_norm(x + self.highway_scale * x_orig)
+        else:
+            h = self.head_norm(x)
         h = F.gelu(self.head_hidden(torch.cat([h, ctx], dim=-1)))
         logits = self.head_out(h)
         # The auxiliary language head in the trainer needs the signature; handing
@@ -392,6 +404,16 @@ class NeuralLexer(nn.Module):
                 n = mod.weight.numel()
                 n_scales = getattr(mod, 'n_scales', mod.weight.shape[0])
                 # Bit-planes are word-aligned per plane, so count the real cost.
+                # A "linear" tensor (other than the depthwise kernel, read
+                # scalar-by-scalar and so exempt) is addressed by the shader as
+                # row * words_per_row, which needs every row to start on a
+                # 32-bit boundary -- export.py pads a row that isn't a multiple
+                # of 32 wide to the next one, and that padding must be counted
+                # here too or this estimate silently under-reports the file
+                # export.py actually writes.
+                rows, cols = mod.weight.shape
+                if isinstance(mod, QuantLinear) and not name.endswith('.dw') and cols % 32 != 0:
+                    n = rows * (cols + (32 - cols % 32))
                 words = (n + 31) // 32
                 quant_bits += words * 32 * mod.bits
                 quant_params += n

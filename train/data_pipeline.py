@@ -160,18 +160,36 @@ def build(
     label_dir: str = './corpus/labels',
     seq_len: int = 512,
     min_len: int = 32,
-    total_tokens: int = 24_000_000,
+    total_tokens: int | None = None,
     max_dup: int = 3,
     cache: str | None = './corpus/dataset',
     verbose: bool = True,
 ) -> tuple[dict[str, LexerDataset], dict]:
-    """Assemble train/val/test datasets from the Shiki-labelled corpus."""
+    """Assemble train/val/test datasets from the Shiki-labelled corpus.
+
+    total_tokens=None (the default) means "whatever is already cached at
+    `cache`, or 24M for a fresh build" -- a caller that doesn't care about
+    corpus size should never be able to silently resize and overwrite a cache
+    another process (or a full training run) is relying on.
+    """
+    cache_path = Path(cache) if cache else None
+    cached_meta = None
+    if cache_path and (cache_path / 'meta.json').exists():
+        cached_meta = json.loads((cache_path / 'meta.json').read_text())
+
+    if total_tokens is None:
+        total_tokens = cached_meta.get('total_tokens_requested', 24_000_000) if cached_meta else 24_000_000
+
     lang_index = {l: i for i, l in enumerate(TARGET_LANGUAGES)}
     budgets = token_budgets(total_tokens)
 
-    cache_path = Path(cache) if cache else None
-    if cache_path and (cache_path / 'meta.json').exists():
-        return _load_cache(cache_path, seq_len)
+    if cache_path and cached_meta is not None:
+        label_mtime = max((f.stat().st_mtime for f in Path(label_dir).glob('labels.*.tsv')), default=0)
+        cache_mtime = (cache_path / 'meta.json').stat().st_mtime
+        if cached_meta.get('total_tokens_requested') == total_tokens and cache_mtime >= label_mtime:
+            return _load_cache(cache_path, seq_len)
+        if verbose:
+            print(f'>> cache at {cache_path} is stale (requested tokens or labels changed) -- rebuilding')
 
     label_files = sorted(Path(label_dir).glob('labels.*.tsv'))
     if not label_files:
@@ -241,12 +259,39 @@ def build(
                     lab = c['label']
                     stats['labels'].update(lab[lab >= 0].tolist())
 
+    _guarantee_split_coverage(per_split)
+
     datasets = {k: LexerDataset.from_samples(v, seq_len)
                 for k, v in per_split.items()}
     meta = _summarize(stats, used_tokens, seq_len, verbose)
+    meta['total_tokens_requested'] = total_tokens
     if cache_path:
         _save_cache(cache_path, per_split, meta)
     return datasets, meta
+
+
+def _guarantee_split_coverage(per_split: dict[str, list[dict]]) -> None:
+    """A low-file-count language can land zero chunks in val/test purely from
+    the 5%/5% hash-of-basename split's luck of the draw -- it then scores a
+    silent 0% forever. Move a few of its train chunks over so every language
+    that has any data at all shows up in every split."""
+    train_by_lang: dict[int, list[dict]] = defaultdict(list)
+    for c in per_split['train']:
+        train_by_lang[int(c['lang'])].append(c)
+
+    for split_name in ('val', 'test'):
+        present = {int(c['lang']) for c in per_split[split_name]}
+        moved_ids: set[int] = set()
+        for lang_id, pool in train_by_lang.items():
+            if lang_id in present or not pool:
+                continue
+            n_move = max(1, len(pool) // 20)
+            moved = pool[:n_move]
+            moved_ids.update(id(c) for c in moved)
+            per_split[split_name].extend(moved)
+            train_by_lang[lang_id] = pool[n_move:]
+        if moved_ids:
+            per_split['train'] = [c for c in per_split['train'] if id(c) not in moved_ids]
 
 
 def _summarize(stats, used_tokens, seq_len, verbose) -> dict:

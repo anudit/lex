@@ -34,7 +34,7 @@ Because the features are language-agnostic, so is the model. It was trained on
 rather than failing outright.
 
 The model is 154k parameters, quantized to 3 bits for the embedding table and
-1 bit for every projection, and ships inline as base64 -- 35 KB, no fetch.
+1 bit for every projection, and ships inline as base85 -- 35 KB, no fetch.
 
 It also reads a pooled *document signature* before any recurrent layer runs and
 uses it to modulate every layer. That is what lets one grammar-free model treat
@@ -44,7 +44,7 @@ uses it to modulate every layer. That is what lets one grammar-free model treat
 
 Scored as agreement with [Shiki](https://shiki.style) over held-out files,
 per non-whitespace character, weighted by GitHub language popularity.
-`npm run dev` in `demo/` reproduces it.
+`bun run dev` in `demo/` reproduces it.
 
 ## Performance notes
 

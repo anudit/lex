@@ -20,8 +20,8 @@ trained and still get measured, without distorting the headline number.
 
 from __future__ import annotations
 
-# Approximate GitHub Innovation Graph top-25 pusher shares, normalized below.
-TOP25_PUSHER_SHARE: dict[str, float] = {
+# Approximate GitHub Innovation Graph top-50 pusher shares, normalized below.
+TOP50_PUSHER_SHARE: dict[str, float] = {
     'javascript': 17.0,
     'python': 15.5,
     'typescript': 10.5,
@@ -44,9 +44,41 @@ TOP25_PUSHER_SHARE: dict[str, float] = {
     'dart': 1.2,
     'scala': 0.9,
     'powershell': 0.8,
+    'make': 0.8,
     'lua': 0.7,
+    'objc': 0.7,
     'perl': 0.6,
     'r': 0.6,
+    'bat': 0.6,
+    'cmake': 0.6,
+    'groovy': 0.5,
+    'sql': 0.5,
+    'asm': 0.5,
+    'dockerfile': 0.5,
+    'viml': 0.4,
+    'hcl': 0.4,
+    'objcpp': 0.4,
+    'elisp': 0.3,
+    'plsql': 0.3,
+    'hlsl': 0.3,
+    'glsl': 0.3,
+    'gherkin': 0.3,
+    'xslt': 0.3,
+    'starlark': 0.25,
+    'awk': 0.25,
+    'tcl': 0.25,
+    'hack': 0.25,
+    'shaderlab': 0.25,
+    'smarty': 0.25,
+    'm4': 0.25,
+    'lex': 0.25,
+    'yacc': 0.25,
+    'qmake': 0.25,
+}
+
+# Top 25 pusher shares (preserved for headroom and baseline comparisons).
+TOP25_PUSHER_SHARE: dict[str, float] = {
+    k: v for k, v in list(TOP50_PUSHER_SHARE.items())[:25]
 }
 
 # Sugar High's full language list -- the coverage claim.
@@ -57,20 +89,18 @@ SUGAR_HIGH_29: tuple[str, ...] = (
     'dockerfile', 'graphql', 'hcl', 'zig', 'lua',
 )
 
-# Everything the model is trained and evaluated on.
+# Everything the model is trained and evaluated on (50 top languages + Sugar High).
 TARGET_LANGUAGES: tuple[str, ...] = tuple(sorted(
-    set(TOP25_PUSHER_SHARE) | set(SUGAR_HIGH_29)
+    set(TOP50_PUSHER_SHARE) | set(SUGAR_HIGH_29)
 ))
 
-# Weight floor for languages outside the top 25, as a share point. Keeps the tail
-# (zig, hcl, graphql, toml, diff, ...) in the corpus and in the metric without
-# letting it move the popularity-weighted headline.
+# Weight floor for languages outside the top 50, as a share point.
 TAIL_SHARE = 0.25
 
 
 def weights() -> dict[str, float]:
     """Normalized evaluation/budget weight per target language (sums to 1.0)."""
-    raw = {lang: TOP25_PUSHER_SHARE.get(lang, TAIL_SHARE) for lang in TARGET_LANGUAGES}
+    raw = {lang: TOP50_PUSHER_SHARE.get(lang, TAIL_SHARE) for lang in TARGET_LANGUAGES}
     total = sum(raw.values())
     return {lang: w / total for lang, w in raw.items()}
 
@@ -97,6 +127,31 @@ def token_budgets(total_tokens: int) -> dict[str, int]:
 SHIKI_ID: dict[str, str] = {
     'shell': 'shellscript',
     'plaintext': 'txt',
+    'make': 'make',
+    'bat': 'bat',
+    'elisp': 'elisp',
+    'viml': 'viml',
+    'objc': 'objc',
+    'objcpp': 'objective-cpp',
+    'tsql': 'sql',
+    'plsql': 'plsql',
+    'asm': 'asm',
+    'cmake': 'cmake',
+    'groovy': 'groovy',
+    'hack': 'hack',
+    'hlsl': 'hlsl',
+    'glsl': 'glsl',
+    'shaderlab': 'shaderlab',
+    'gherkin': 'gherkin',
+    'tcl': 'tcl',
+    'awk': 'awk',
+    'starlark': 'python',
+    'smarty': 'html',
+    'xslt': 'xml',
+    'm4': 'shellscript',
+    'lex': 'c',
+    'yacc': 'c',
+    'qmake': 'make',
 }
 
 

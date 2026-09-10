@@ -1,7 +1,7 @@
 // Shared measurement code for the correctness benchmark.
 //
 // Lives apart from the page so it can be run headlessly to regenerate
-// results.json (`npm run capture`) without the page depending on it. The page
+// results.json (`bun run capture`) without the page depending on it. The page
 // renders committed numbers; only this file computes them.
 
 import { createHighlighter } from 'shiki';

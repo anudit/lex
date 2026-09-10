@@ -3,7 +3,7 @@
 // Correctness is measured once and committed to results.json, because the answer
 // only changes when the model or the corpora change -- recomputing 1,555 files on
 // every page load costs ~90 seconds and a GPU device to redraw a static bar
-// chart. Regenerate with `npm run capture`. Latency is different: it depends on
+// chart. Regenerate with `bun run capture`. Latency is different: it depends on
 // the machine viewing the page, so it stays a live button.
 //
 //   Correctness -- popularity-weighted agreement with Shiki, over two corpora.
@@ -40,6 +40,35 @@ app.innerHTML = `
       measurement.
     </p>
   </header>
+
+  <section class="playground-section">
+    <div class="section-head">
+      <h2>Live Playground</h2>
+      <span class="meta">WebGPU neural highlighter &middot; real-time inference</span>
+    </div>
+    <div class="playground-toolbar">
+      <span class="toolbar-label">Samples:</span>
+      <button class="sample-btn active" data-sample="js" type="button">JavaScript</button>
+      <button class="sample-btn" data-sample="py" type="button">Python</button>
+      <button class="sample-btn" data-sample="rust" type="button">Rust</button>
+      <button class="sample-btn" data-sample="cpp" type="button">C++</button>
+      <button class="sample-btn" data-sample="sql" type="button">SQL</button>
+    </div>
+    <div class="playground-editor-wrap">
+      <pre class="playground-highlight" aria-hidden="true"><code id="playground-code"></code></pre>
+      <textarea id="playground-input" class="playground-input" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Type or paste code in any language..."></textarea>
+    </div>
+    <div class="playground-footer">
+      <div class="playground-stats">
+        <span class="stat-dot" id="stat-dot"></span>
+        <span>Inference: <strong id="inference-time" class="stat-time">—</strong></span>
+        <span class="stat-sep">&middot;</span>
+        <span id="char-count">0 chars</span>
+      </div>
+      <span class="playground-hint">Type or paste code &middot; Tab key inserts 2 spaces &middot; zero grammar bundles</span>
+    </div>
+  </section>
+
   <div id="results"></div>
   <div class="controls">
     <button id="run-latency" class="primary" type="button">Run latency</button>
@@ -57,6 +86,51 @@ let engines = null;
 
 
 
+
+// Buckets for the per-language agreement table: coarser than the raw
+// per-language breakdown below, so the coverage picture reads at a glance
+// instead of forcing a scan of 50+ rows of numbers.
+const AGREEMENT_BUCKETS = [
+  { min: 95, label: '95-100%' },
+  { min: 90, label: '90-<95%' },
+  { min: 80, label: '80-<90%' },
+  { min: 70, label: '70-<80%' },
+  { min: 60, label: '60-<70%' },
+  { min: 50, label: '50-<60%' },
+  { min: -Infinity, label: '<50%' },
+];
+
+const AGREEMENT_TITLE = {
+  'held-out files': 'Held-out',
+  'unseen repos': 'Unseen-repos',
+};
+
+function renderAgreementTable(lexRow, present, label) {
+  if (!lexRow) return '';
+  const langs = [...present].filter((l) => lexRow.perLang[l] !== undefined);
+  // AGREEMENT_BUCKETS is sorted highest-min first, so the first bucket a
+  // language's score clears is its bucket.
+  const buckets = AGREEMENT_BUCKETS.map((b) => ({ ...b, langs: [] }));
+  for (const l of langs) {
+    const v = lexRow.perLang[l] * 100;
+    buckets.find((b) => v >= b.min).langs.push(l);
+  }
+  for (const b of buckets) b.langs.sort();
+  const nonEmpty = buckets.filter((b) => b.langs.length);
+  const title = AGREEMENT_TITLE[label] ?? label;
+  return `
+    <div class="agreement-table">
+      <h3 class="agree-title">${title} label agreement with Shiki by language</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>agreement</th><th>verified languages (${langs.length})</th></tr></thead>
+          <tbody>
+            ${nonEmpty.map((b) => `<tr><td>${b.label}</td><td class="lang-list">${b.langs.join(', ')}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
 
 function renderCorrectness(rows, label, nFiles, present) {
   const best = Math.max(...rows.map((r) => r.weighted));
@@ -85,6 +159,7 @@ function renderCorrectness(rows, label, nFiles, present) {
       </div>
       <p class="footnote">Popularity-weighted agreement with Shiki over ${nFiles} files in
         ${present.size} languages, renormalized over the languages present.</p>
+      ${renderAgreementTable(rows.find((r) => r.name === 'lex (ours)'), present, label)}
       <details>
         <summary>Per-language breakdown</summary>
         <div class="scroll">
@@ -206,3 +281,200 @@ document.getElementById('run-latency').addEventListener('click', (e) => {
     .catch((err) => { setStatus(String(err), 'error'); console.error(err); })
     .finally(() => { e.target.disabled = false; });
 });
+
+// ---------------------------------------------------------------- playground
+
+const playgroundInput = document.getElementById('playground-input');
+const playgroundCode = document.getElementById('playground-code');
+const playgroundPre = playgroundCode?.parentElement;
+const inferenceTime = document.getElementById('inference-time');
+const charCount = document.getElementById('char-count');
+const statDot = document.getElementById('stat-dot');
+
+const SAMPLES = {
+  js: `export async function fetchUsers(ids = []) {
+  const MAX = 3.14;
+  // Query users and format IDs
+  return ids.map((id) => \`#\${id}\`);
+}`,
+  py: `def quicksort(arr):
+    """Sort list using Lomuto partition."""
+    if len(arr) <= 1:
+        return arr
+    pivot = arr[len(arr) // 2]
+    left = [x for x in arr if x < pivot]
+    middle = [x for x in arr if x == pivot]
+    right = [x for x in arr if x > pivot]
+    return quicksort(left) + middle + quicksort(right)`,
+  rust: `pub fn counts(t: &str) -> HashMap<&str, usize> {
+    let mut m = HashMap::new();  // tally word occurrences
+    for word in t.split_whitespace() {
+        *m.entry(word).or_insert(0) += 1;
+    }
+    m
+}`,
+  cpp: `#include <iostream>
+#include <vector>
+
+template <typename T>
+void print_vec(const std::vector<T>& v) {
+    for (const auto& item : v) {
+        std::cout << item << "\\n";
+    }
+}`,
+  sql: `SELECT u.id, u.name, COUNT(o.id) AS total_orders
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+WHERE u.status = 'active'
+GROUP BY u.id, u.name
+HAVING COUNT(o.id) > 5;`
+};
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderSpansHtml(code, spans) {
+  if (!spans || !spans.length) {
+    let html = escapeHtml(code);
+    if (html.endsWith('\n')) html += ' ';
+    return html;
+  }
+  let html = '';
+  let pos = 0;
+  for (const s of spans) {
+    if (s.start > pos) {
+      html += escapeHtml(code.slice(pos, s.start));
+    }
+    const cls = s.type ? `lex-${s.type}` : 'lex-plain';
+    html += `<span class="${cls}">${escapeHtml(code.slice(s.start, s.end))}</span>`;
+    pos = s.end;
+  }
+  if (pos < code.length) {
+    html += escapeHtml(code.slice(pos));
+  }
+  if (html.endsWith('\n')) {
+    html += ' ';
+  }
+  return html;
+}
+
+let lexerPromise = null;
+function getLexer() {
+  if (!lexerPromise) {
+    if (typeof navigator !== 'undefined' && navigator.gpu) {
+      lexerPromise = import('lex').then((m) => m.createLexer());
+    } else {
+      lexerPromise = Promise.resolve(null);
+    }
+  }
+  return lexerPromise;
+}
+
+let playgroundSeq = 0;
+async function triggerHighlight() {
+  if (!playgroundInput || !playgroundCode) return;
+  const seq = ++playgroundSeq;
+  const code = playgroundInput.value;
+  if (charCount) charCount.textContent = `${code.length} chars`;
+
+  if (!code.length) {
+    playgroundCode.innerHTML = '';
+    if (inferenceTime) inferenceTime.textContent = '0.00 ms';
+    return;
+  }
+
+  if (typeof navigator === 'undefined' || !navigator.gpu) {
+    let plain = escapeHtml(code);
+    if (plain.endsWith('\n')) plain += ' ';
+    playgroundCode.innerHTML = plain;
+    if (inferenceTime) inferenceTime.textContent = 'WebGPU unavailable';
+    if (statDot) {
+      statDot.style.background = 'var(--dim)';
+      statDot.style.boxShadow = 'none';
+    }
+    return;
+  }
+
+  try {
+    const lexer = await getLexer();
+    if (!lexer) {
+      let plain = escapeHtml(code);
+      if (plain.endsWith('\n')) plain += ' ';
+      playgroundCode.innerHTML = plain;
+      if (inferenceTime) inferenceTime.textContent = 'WebGPU unavailable';
+      return;
+    }
+    const t0 = performance.now();
+    const spans = await lexer.highlight(code);
+    const dt = performance.now() - t0;
+
+    if (seq === playgroundSeq) {
+      playgroundCode.innerHTML = renderSpansHtml(code, spans);
+      if (inferenceTime) inferenceTime.textContent = `${dt.toFixed(2)} ms`;
+      if (statDot) {
+        statDot.style.background = 'var(--green)';
+        statDot.style.boxShadow = '0 0 6px var(--green)';
+      }
+    }
+  } catch (err) {
+    console.error('Playground highlight error:', err);
+    if (seq === playgroundSeq) {
+      let plain = escapeHtml(code);
+      if (plain.endsWith('\n')) plain += ' ';
+      playgroundCode.innerHTML = plain;
+      if (inferenceTime) inferenceTime.textContent = 'error';
+      if (statDot) {
+        statDot.style.background = 'var(--red)';
+        statDot.style.boxShadow = 'none';
+      }
+    }
+  }
+}
+
+if (playgroundInput && playgroundPre) {
+  playgroundInput.addEventListener('scroll', () => {
+    playgroundPre.scrollTop = playgroundInput.scrollTop;
+    playgroundPre.scrollLeft = playgroundInput.scrollLeft;
+  });
+
+  playgroundInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = playgroundInput.selectionStart;
+      const end = playgroundInput.selectionEnd;
+      const val = playgroundInput.value;
+      playgroundInput.value = val.substring(0, start) + '  ' + val.substring(end);
+      playgroundInput.selectionStart = playgroundInput.selectionEnd = start + 2;
+      triggerHighlight();
+    }
+  });
+
+  playgroundInput.addEventListener('input', () => {
+    document.querySelectorAll('.sample-btn').forEach((b) => b.classList.remove('active'));
+    triggerHighlight();
+  });
+
+  document.querySelectorAll('.sample-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.sample-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const sampleKey = btn.dataset.sample;
+      if (SAMPLES[sampleKey]) {
+        playgroundInput.value = SAMPLES[sampleKey];
+        triggerHighlight();
+        playgroundInput.focus();
+      }
+    });
+  });
+
+  // Default sample
+  playgroundInput.value = SAMPLES.js;
+  triggerHighlight();
+}
+

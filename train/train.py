@@ -34,7 +34,7 @@ from collections import Counter
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 import data_pipeline as dp
 import export
@@ -114,6 +114,9 @@ def evaluate(model: NeuralLexer, loader: DataLoader, device: torch.device,
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--dataset', default='./corpus/dataset')
+    ap.add_argument('--total-tokens', type=int, default=None,
+                    help='corpus size to slice; defaults to whatever is already '
+                         'cached at --dataset, or 24M for a fresh cache')
     ap.add_argument('--epochs', type=int, default=12)
     ap.add_argument('--batch-size', type=int, default=24)
     ap.add_argument('--lr', type=float, default=2e-3)
@@ -122,7 +125,7 @@ def main() -> None:
     ap.add_argument('--out-dir', default='./checkpoints')
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--max-steps', type=int, default=0, help='0 = full epochs')
-    ap.add_argument('--film-rank', type=int, default=64,
+    ap.add_argument('--film-rank', type=int, default=48,
                     help='rank of the FiLM projection; 0 disables conditioning')
     ap.add_argument('--lang-loss', type=float, default=0.2,
                     help='weight of the auxiliary language loss; 0 disables it')
@@ -132,14 +135,27 @@ def main() -> None:
     device = pick_device()
     print(f'>> device: {device}')
 
-    ds, meta = dp.build(cache=args.dataset)
+    ds, meta = dp.build(cache=args.dataset, total_tokens=args.total_tokens)
     print(f">> corpus: {meta['total_tokens']:,} tokens, {meta['files']:,} files, "
           f"{meta['languages_covered']}/{meta['languages_target']} languages "
           f"({100 * meta['weight_covered']:.1f}% of eval weight)")
     print(f">> windows: {len(ds['train']):,} train / {len(ds['val']):,} val / "
           f"{len(ds['test']):,} test  (split by file)")
 
-    train_loader = DataLoader(ds['train'], batch_size=args.batch_size, shuffle=True,
+    # Token budgets are popularity-weighted, so high-resource languages (JS, Python,
+    # TypeScript, ...) fill most of every epoch by raw window count. Left alone, that
+    # starves low-resource languages of gradient signal even when their own token
+    # budget is unchanged -- shared capacity gets bid away by whoever has more windows.
+    # Weight each window by the inverse size of its language's window count so every
+    # language gets roughly equal expected exposure per epoch.
+    train_lang_counts = np.bincount(ds['train'].langs, minlength=len(TARGET_LANGUAGES))
+    per_window_weight = 1.0 / np.maximum(train_lang_counts[ds['train'].langs], 1)
+    train_sampler = WeightedRandomSampler(
+        torch.from_numpy(per_window_weight).double(),
+        num_samples=len(ds['train']), replacement=True)
+
+    train_loader = DataLoader(ds['train'], batch_size=args.batch_size,
+                              sampler=train_sampler,
                               num_workers=args.workers, drop_last=True,
                               persistent_workers=args.workers > 0)
     val_loader = DataLoader(ds['val'], batch_size=args.batch_size,
@@ -235,9 +251,12 @@ def main() -> None:
     with open(os.path.join(args.out_dir, 'history.json'), 'w') as fh:
         json.dump(history, fh, indent=2)
 
-    ck = torch.load(os.path.join(args.out_dir, 'best_model.pt'),
-                    map_location=device, weights_only=False)
-    model.load_state_dict(ck['model_state_dict'])
+    best_ckpt_path = os.path.join(args.out_dir, 'best_model.pt')
+    if os.path.exists(best_ckpt_path):
+        ck = torch.load(best_ckpt_path, map_location=device, weights_only=False)
+        if 'config' in ck:
+            model = NeuralLexer(LexerConfig(**ck['config'])).to(device)
+        model.load_state_dict(ck['model_state_dict'], strict=False)
     rep = export.export_model(model, args.out_dir)
     print(f"\n>> exported {rep['kb']:.2f} KB, round-trip max error {rep['max_abs_error']:.2e}")
     print(f">> best weighted agreement with Shiki: {100 * best:.2f}% "

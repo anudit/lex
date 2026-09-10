@@ -5,7 +5,7 @@
     "": {
       "name": "lex-demo",
       "dependencies": {
-        "gpu-lexer": "0.0.2",
+        "gpu-lexer": "^0.0.2",
         "lex": "file:../lex",
         "prismjs": "^1.30.0",
         "shiki": "^4.4.3",

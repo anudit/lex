@@ -64,6 +64,31 @@ LANG_EXTENSIONS: dict[str, tuple[str, ...]] = {
     'scala': ('.scala', '.sc'),
     'perl': ('.pl', '.pm', '.t'),
     'r': ('.R', '.r'),
+    'make': ('.mk', '.mak'),
+    'bat': ('.bat', '.cmd'),
+    'cmake': ('.cmake',),
+    'objc': ('.m',),
+    'objcpp': ('.mm',),
+    'elisp': ('.el',),
+    'viml': ('.vim',),
+    'groovy': ('.groovy', '.gvy'),
+    'asm': ('.asm', '.s', '.S'),
+    'glsl': ('.glsl', '.vert', '.frag', '.geom'),
+    'hlsl': ('.hlsl', '.hlsli'),
+    'shaderlab': ('.shader',),
+    'plsql': ('.pls', '.plsql', '.pks', '.pkb', '.sql'),
+    'tsql': ('.sql',),
+    'tcl': ('.tcl',),
+    'awk': ('.awk',),
+    'starlark': ('.bzl', '.star'),
+    'hack': ('.hack', '.hh'),
+    'gherkin': ('.feature',),
+    'xslt': ('.xslt', '.xsl'),
+    'smarty': ('.tpl',),
+    'm4': ('.m4',),
+    'lex': ('.l', '.lex'),
+    'yacc': ('.y', '.yacc'),
+    'qmake': ('.pro', '.pri'),
 }
 
 # Paths that add bulk without adding syntax: vendored trees, minified bundles,
@@ -104,7 +129,7 @@ def _matches(lang: str, member_path: str) -> bool:
 
 
 def harvest_repo(lang: str, repo: str, out_dir: Path, budget: int,
-                 max_download: int = 400_000_000) -> int:
+                 max_download: int = 150_000_000) -> int:
     """Stream one repo tarball, writing matching files until `budget` bytes are met.
 
     Returns bytes written. The response is closed as soon as the budget is hit,
@@ -116,7 +141,7 @@ def harvest_repo(lang: str, repo: str, out_dir: Path, budget: int,
     slug = repo.replace('/', '__')
     try:
         req = urllib.request.Request(url, headers=UA)
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             counting = _CountingReader(resp, max_download)
             with tarfile.open(fileobj=counting, mode='r|gz') as tar:
                 for member in tar:
@@ -147,7 +172,10 @@ def harvest_repo(lang: str, repo: str, out_dir: Path, budget: int,
                     flat = f'{slug}__{rel.replace("/", "_")}'
                     if not flat.lower().endswith(LANG_EXTENSIONS[lang]):
                         flat += '.txt' if lang == 'plaintext' else '.dockerfile'
-                    (out_dir / flat).write_text(text, encoding='utf-8')
+                    target_file = out_dir / flat
+                    if target_file.exists():
+                        continue
+                    target_file.write_text(text, encoding='utf-8')
                     written += len(text)
                     files += 1
     except _BudgetReached:
@@ -230,36 +258,55 @@ def fetch_language(lang: str, root: Path, budget: int, token: str | None) -> tup
     if existing >= budget:
         return lang, existing, len(list(out_dir.iterdir()))
 
-    written = existing
+    needed = budget - existing
+    print(f'  -> [{lang}] starting fetch: current {existing / 1e6:.2f} MB, needed {needed / 1e6:.2f} MB', flush=True)
     if lang == 'diff':
-        written += harvest_diffs(out_dir, budget - written, token)
+        new_bytes = harvest_diffs(out_dir, needed, token)
+        existing += new_bytes
     else:
-        # Give every repository a share of the budget rather than draining them
-        # in order. Taking the budget from the first two repos is how a language
-        # ends up with one house style, and adding repos to the end of the list
-        # then changes nothing because the budget is already met.
         repos = REPOS[lang]
-        share = max(1, (budget - written) // max(1, len(repos)))
+        share = max(1, budget // max(1, len(repos)))
+        cap = max(share * MAX_REPO_SHARE, 1_500_000)
         taken: dict[str, int] = {}
         for repo in repos:
-            if written >= budget:
+            if existing >= budget:
                 break
-            got = harvest_repo(lang, repo, out_dir, share)
+            slug = repo.replace('/', '__')
+            repo_existing = sum(p.stat().st_size for p in out_dir.glob(f'{slug}__*') if p.is_file())
+            room = min(budget - existing, max(0, cap - repo_existing))
+            if room <= 0:
+                continue
+            got = harvest_repo(lang, repo, out_dir, room)
             taken[repo] = got
-            written += got
-        # Second pass for repos that had less than a share, but capped: a project
-        # with thousands of tiny files (SPDX licence templates, say) would
-        # otherwise absorb everyone else's leftover budget and end up as 91% of
-        # the language. Many files from one project is still one distribution,
-        # and validation drawn from the same source will not reveal the gap.
-        cap = share * MAX_REPO_SHARE
-        for repo in repos:
-            if written >= budget:
-                break
-            room = min(budget - written, cap - taken.get(repo, 0))
-            if room > 0:
-                written += harvest_repo(lang, repo, out_dir, room)
-    return lang, written, len(list(out_dir.iterdir()))
+            existing += got
+        # Second pass to top off remaining budget from repos with additional files.
+        # Still capped per repo (at a relaxed multiple), cumulative with pass one --
+        # handing the *whole* remaining budget to the first repo in the list that
+        # still has bytes defeats the cap pass one just enforced, and is exactly how
+        # a single deep-content repo (e.g. google/guava for java, 79% single-source)
+        # ends up dominating despite a dozen other repos being configured.
+        topoff_cap = max(share * MAX_REPO_SHARE * 3, 1_500_000)
+        if existing < budget:
+            for repo in repos:
+                if existing >= budget:
+                    break
+                slug = repo.replace('/', '__')
+                repo_existing = sum(p.stat().st_size for p in out_dir.glob(f'{slug}__*') if p.is_file())
+                room = min(budget - existing, max(0, topoff_cap - repo_existing))
+                if room <= 0:
+                    continue
+                got = harvest_repo(lang, repo, out_dir, room)
+                existing += got
+        # Final, uncapped pass only if every repo is already at the relaxed cap and
+        # the budget still isn't met -- better to slightly over-concentrate than to
+        # silently ship an under-budget corpus for the language.
+        if existing < budget:
+            for repo in repos:
+                if existing >= budget:
+                    break
+                got = harvest_repo(lang, repo, out_dir, budget - existing)
+                existing += got
+    return lang, existing, len(list(out_dir.iterdir()))
 
 
 def main() -> None:
@@ -276,6 +323,8 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.holdout:
+        if args.out == './corpus/raw':
+            args.out = './corpus/holdout'
         # holdout_repos() strips anything that also appears in training, so a
         # repository in both lists cannot silently contaminate the comparison.
         from repos_holdout import holdout_repos
@@ -294,7 +343,7 @@ def main() -> None:
     budgets = token_budgets(args.total_tokens)
     byte_budget = {l: int(budgets.get(l, 250_000) * 2.5 * args.headroom) for l in langs}
 
-    print(f'Fetching {len(langs)} languages for a {args.total_tokens:,}-token corpus -> {root}')
+    print(f'Fetching {len(langs)} languages for a {args.total_tokens:,}-token corpus -> {root}', flush=True)
     total = 0
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(fetch_language, l, root, byte_budget[l], token): l
@@ -302,8 +351,8 @@ def main() -> None:
         for fut in as_completed(futures):
             lang, written, nfiles = fut.result()
             total += written
-            print(f'  {lang:12s} {written / 1e6:7.2f} MB  {nfiles:5d} files')
-    print(f'\nTotal raw corpus: {total / 1e6:.1f} MB')
+            print(f'  [DONE] {lang:12s} {written / 1e6:7.2f} MB  {nfiles:5d} files (target: {byte_budget[lang]/1e6:.2f} MB)', flush=True)
+    print(f'\nTotal raw corpus: {total / 1e6:.1f} MB', flush=True)
 
 
 if __name__ == '__main__':

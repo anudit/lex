@@ -276,6 +276,10 @@ th, td {
 th { color: var(--dim); font-weight: 400; }
 td.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.tail td { color: var(--dim); }
+td.lang-list { white-space: normal; line-height: 1.7; }
+
+.agreement-table { margin-top: 22px; }
+.agree-title { font-size: 13px; font-weight: 400; color: var(--ink); margin: 0; }
 
 details { margin-top: 16px; }
 summary { cursor: pointer; color: var(--accent); font-size: 12.5px; }
@@ -332,7 +336,159 @@ figcaption {
 .lex-function { color: var(--gold); }
 .lex-constant { color: #79c0ff; }
 
+/* ---------- playground ---------- */
+
+.playground-section {
+  margin: 0 0 44px;
+}
+
+.playground-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.toolbar-label {
+  font-size: 12.5px;
+  color: var(--dim);
+  margin-right: 4px;
+}
+
+.sample-btn {
+  font-size: 12px;
+  padding: 5px 12px;
+  background: var(--box);
+  border: 1px dashed var(--line);
+  color: var(--ink);
+  cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.15s ease;
+}
+
+.sample-btn:hover {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sample-btn.active {
+  background: var(--track);
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.playground-editor-wrap {
+  position: relative;
+  border: 1px dashed var(--line);
+  background: var(--box);
+  border-radius: 2px;
+  height: 250px;
+  overflow: hidden;
+}
+
+.playground-highlight,
+.playground-input {
+  margin: 0;
+  padding: 18px 20px;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  letter-spacing: 0;
+  tab-size: 2;
+  white-space: pre;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+}
+
+.playground-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: transparent;
+  color: var(--ink);
+  z-index: 1;
+}
+
+.playground-highlight code {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  display: block;
+}
+
+.playground-input {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--accent);
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: auto;
+}
+
+.playground-input::selection {
+  background: rgba(122, 162, 255, 0.28);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.playground-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--dim);
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.playground-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--box);
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+}
+
+.stat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  display: inline-block;
+  box-shadow: 0 0 6px var(--green);
+}
+
+.stat-time {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.stat-sep {
+  color: var(--faint);
+}
+
+.playground-hint {
+  font-size: 12px;
+  color: var(--dim);
+}
+
 @media (max-width: 640px) {
   .bar-row, .axis { grid-template-columns: 110px 1fr 70px; }
   #app { padding: 20px 16px 60px; }
+  .playground-editor-wrap { height: 220px; }
 }

@@ -141,7 +141,10 @@ def test_export_roundtrip():
 # was added; that was a deliberate trade of 6 KB for the ability to route the
 # document signature through every layer. The assertion tracks the budget that
 # was actually agreed, and still checks that the reported size matches the file.
-SIZE_BUDGET_KB = 35.0
+# film_rank=48 added another ~0.75 KB on top of that: film.up's rows must be
+# padded to the next 32-bit word boundary (48 is not a multiple of 32) so the
+# shader's row * words_per_row addressing stays valid -- see wgsl.py / export.py.
+SIZE_BUDGET_KB = 35.5
 GPU_LEXER_KB = 31.0
 
 

@@ -6,7 +6,12 @@
     "n_layers": 3,
     "kernel_size": 5,
     "head_hidden": 96,
-    "num_classes": 9
+    "num_classes": 9,
+    "dilations": [
+      1,
+      2,
+      4
+    ]
   },
   "field_sizes": {
     "kind": 4,
@@ -34,12 +39,12 @@
   },
   "flag_offset": 1004,
   "n_flag_bits": 8,
-  "plane_words": 5807,
-  "f16_count": 2973,
-  "plane_bytes": 23228,
-  "f16_bytes": 5946,
-  "total_bytes": 29174,
-  "parameters": 120073,
+  "plane_words": 6767,
+  "f16_count": 4606,
+  "plane_bytes": 27068,
+  "f16_bytes": 9212,
+  "total_bytes": 36280,
+  "parameters": 145850,
   "tensors": {
     "embedding.table": {
       "kind": "embedding",
@@ -84,6 +89,38 @@
       "bias_offset": 75,
       "bias_count": 64
     },
+    "film.down": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        48,
+        128
+      ],
+      "plane_offset": 3100,
+      "plane_count": 192,
+      "words_per_plane": 192,
+      "words_per_row": 4,
+      "scale_offset": 139,
+      "scale_count": 48,
+      "bias_offset": 187,
+      "bias_count": 48
+    },
+    "film.up": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        384,
+        48
+      ],
+      "plane_offset": 3292,
+      "plane_count": 768,
+      "words_per_plane": 768,
+      "words_per_row": 2,
+      "scale_offset": 235,
+      "scale_count": 384,
+      "bias_offset": 619,
+      "bias_count": 384
+    },
     "layers.0.dw": {
       "kind": "linear",
       "bits": 4,
@@ -91,13 +128,13 @@
         64,
         5
       ],
-      "plane_offset": 3100,
+      "plane_offset": 4060,
       "plane_count": 40,
       "words_per_plane": 10,
       "words_per_row": 0,
-      "scale_offset": 139,
+      "scale_offset": 1003,
       "scale_count": 64,
-      "bias_offset": 203,
+      "bias_offset": 1067,
       "bias_count": 64
     },
     "layers.0.proj_in": {
@@ -107,13 +144,13 @@
         128,
         64
       ],
-      "plane_offset": 3140,
+      "plane_offset": 4100,
       "plane_count": 256,
       "words_per_plane": 256,
       "words_per_row": 2,
-      "scale_offset": 267,
+      "scale_offset": 1131,
       "scale_count": 128,
-      "bias_offset": 395,
+      "bias_offset": 1259,
       "bias_count": 128
     },
     "layers.0.proj_out": {
@@ -123,13 +160,13 @@
         64,
         128
       ],
-      "plane_offset": 3396,
+      "plane_offset": 4356,
       "plane_count": 256,
       "words_per_plane": 256,
       "words_per_row": 4,
-      "scale_offset": 523,
+      "scale_offset": 1387,
       "scale_count": 64,
-      "bias_offset": 587,
+      "bias_offset": 1451,
       "bias_count": 64
     },
     "layers.1.dw": {
@@ -139,13 +176,13 @@
         64,
         5
       ],
-      "plane_offset": 3652,
+      "plane_offset": 4612,
       "plane_count": 40,
       "words_per_plane": 10,
       "words_per_row": 0,
-      "scale_offset": 651,
+      "scale_offset": 1515,
       "scale_count": 64,
-      "bias_offset": 715,
+      "bias_offset": 1579,
       "bias_count": 64
     },
     "layers.1.proj_in": {
@@ -155,13 +192,13 @@
         128,
         64
       ],
-      "plane_offset": 3692,
+      "plane_offset": 4652,
       "plane_count": 256,
       "words_per_plane": 256,
       "words_per_row": 2,
-      "scale_offset": 779,
+      "scale_offset": 1643,
       "scale_count": 128,
-      "bias_offset": 907,
+      "bias_offset": 1771,
       "bias_count": 128
     },
     "layers.1.proj_out": {
@@ -171,13 +208,13 @@
         64,
         128
       ],
-      "plane_offset": 3948,
+      "plane_offset": 4908,
       "plane_count": 256,
       "words_per_plane": 256,
       "words_per_row": 4,
-      "scale_offset": 1035,
+      "scale_offset": 1899,
       "scale_count": 64,
-      "bias_offset": 1099,
+      "bias_offset": 1963,
       "bias_count": 64
     },
     "layers.2.dw": {
@@ -187,13 +224,13 @@
         64,
         5
       ],
-      "plane_offset": 4204,
+      "plane_offset": 5164,
       "plane_count": 40,
       "words_per_plane": 10,
       "words_per_row": 0,
-      "scale_offset": 1163,
+      "scale_offset": 2027,
       "scale_count": 64,
-      "bias_offset": 1227,
+      "bias_offset": 2091,
       "bias_count": 64
     },
     "layers.2.proj_in": {
@@ -203,13 +240,13 @@
         128,
         64
       ],
-      "plane_offset": 4244,
+      "plane_offset": 5204,
       "plane_count": 256,
       "words_per_plane": 256,
       "words_per_row": 2,
-      "scale_offset": 1291,
+      "scale_offset": 2155,
       "scale_count": 128,
-      "bias_offset": 1419,
+      "bias_offset": 2283,
       "bias_count": 128
     },
     "layers.2.proj_out": {
@@ -219,13 +256,13 @@
         64,
         128
       ],
-      "plane_offset": 4500,
+      "plane_offset": 5460,
       "plane_count": 256,
       "words_per_plane": 256,
       "words_per_row": 4,
-      "scale_offset": 1547,
+      "scale_offset": 2411,
       "scale_count": 64,
-      "bias_offset": 1611,
+      "bias_offset": 2475,
       "bias_count": 64
     },
     "global_ctx.summary": {
@@ -235,13 +272,13 @@
         64,
         256
       ],
-      "plane_offset": 4756,
+      "plane_offset": 5716,
       "plane_count": 512,
       "words_per_plane": 512,
       "words_per_row": 8,
-      "scale_offset": 1675,
+      "scale_offset": 2539,
       "scale_count": 64,
-      "bias_offset": 1739,
+      "bias_offset": 2603,
       "bias_count": 64
     },
     "global_ctx.gate": {
@@ -251,13 +288,13 @@
         64,
         64
       ],
-      "plane_offset": 5268,
+      "plane_offset": 6228,
       "plane_count": 128,
       "words_per_plane": 128,
       "words_per_row": 2,
-      "scale_offset": 1803,
+      "scale_offset": 2667,
       "scale_count": 64,
-      "bias_offset": 1867,
+      "bias_offset": 2731,
       "bias_count": 64
     },
     "head_hidden": {
@@ -267,13 +304,13 @@
         96,
         128
       ],
-      "plane_offset": 5396,
+      "plane_offset": 6356,
       "plane_count": 384,
       "words_per_plane": 384,
       "words_per_row": 4,
-      "scale_offset": 1931,
+      "scale_offset": 2795,
       "scale_count": 96,
-      "bias_offset": 2027,
+      "bias_offset": 2891,
       "bias_count": 96
     },
     "head_out": {
@@ -283,21 +320,46 @@
         9,
         96
       ],
-      "plane_offset": 5780,
+      "plane_offset": 6740,
       "plane_count": 27,
       "words_per_plane": 27,
       "words_per_row": 3,
-      "scale_offset": 2123,
+      "scale_offset": 2987,
       "scale_count": 9,
-      "bias_offset": 2132,
+      "bias_offset": 2996,
       "bias_count": 9
+    },
+    "highway_scale": {
+      "kind": "f16",
+      "shape": [
+        1
+      ],
+      "f16_offset": 3005,
+      "f16_count": 1
+    },
+    "film.strength": {
+      "kind": "f16",
+      "shape": [
+        3,
+        64
+      ],
+      "f16_offset": 3006,
+      "f16_count": 192
+    },
+    "film.norm.weight": {
+      "kind": "f16",
+      "shape": [
+        128
+      ],
+      "f16_offset": 3198,
+      "f16_count": 128
     },
     "layers.0.out_gate": {
       "kind": "f16",
       "shape": [
         64
       ],
-      "f16_offset": 2141,
+      "f16_offset": 3326,
       "f16_count": 64
     },
     "layers.0.decay_f": {
@@ -305,7 +367,7 @@
       "shape": [
         64
       ],
-      "f16_offset": 2205,
+      "f16_offset": 3390,
       "f16_count": 64
     },
     "layers.0.decay_b": {
@@ -313,7 +375,23 @@
       "shape": [
         64
       ],
-      "f16_offset": 2269,
+      "f16_offset": 3454,
+      "f16_count": 64
+    },
+    "layers.0.reset_f": {
+      "kind": "f16",
+      "shape": [
+        64
+      ],
+      "f16_offset": 3518,
+      "f16_count": 64
+    },
+    "layers.0.reset_b": {
+      "kind": "f16",
+      "shape": [
+        64
+      ],
+      "f16_offset": 3582,
       "f16_count": 64
     },
     "layers.0.norm.weight": {
@@ -321,7 +399,7 @@
       "shape": [
         64
       ],
-      "f16_offset": 2333,
+      "f16_offset": 3646,
       "f16_count": 64
     },
     "layers.1.out_gate": {
@@ -329,7 +407,7 @@
       "shape": [
         64
       ],
-      "f16_offset": 2397,
+      "f16_offset": 3710,
       "f16_count": 64
     },
     "layers.1.decay_f": {
@@ -337,7 +415,7 @@
       "shape": [
         64
       ],
-      "f16_offset": 2461,
+      "f16_offset": 3774,
       "f16_count": 64
     },
     "layers.1.decay_b": {
@@ -345,7 +423,23 @@
       "shape": [
         64
       ],
-      "f16_offset": 2525,
+      "f16_offset": 3838,
+      "f16_count": 64
+    },
+    "layers.1.reset_f": {
+      "kind": "f16",
+      "shape": [
+        64
+      ],
+      "f16_offset": 3902,
+      "f16_count": 64
+    },
+    "layers.1.reset_b": {
+      "kind": "f16",
+      "shape": [
+        64
+      ],
+      "f16_offset": 3966,
       "f16_count": 64
     },
     "layers.1.norm.weight": {
@@ -353,7 +447,7 @@
       "shape": [
         64
       ],
-      "f16_offset": 2589,
+      "f16_offset": 4030,
       "f16_count": 64
     },
     "layers.2.out_gate": {
@@ -361,7 +455,7 @@
       "shape": [
         64
       ],
-      "f16_offset": 2653,
+      "f16_offset": 4094,
       "f16_count": 64
     },
     "layers.2.decay_f": {
@@ -369,7 +463,7 @@
       "shape": [
         64
       ],
-      "f16_offset": 2717,
+      "f16_offset": 4158,
       "f16_count": 64
     },
     "layers.2.decay_b": {
@@ -377,7 +471,23 @@
       "shape": [
         64
       ],
-      "f16_offset": 2781,
+      "f16_offset": 4222,
+      "f16_count": 64
+    },
+    "layers.2.reset_f": {
+      "kind": "f16",
+      "shape": [
+        64
+      ],
+      "f16_offset": 4286,
+      "f16_count": 64
+    },
+    "layers.2.reset_b": {
+      "kind": "f16",
+      "shape": [
+        64
+      ],
+      "f16_offset": 4350,
       "f16_count": 64
     },
     "layers.2.norm.weight": {
@@ -385,7 +495,15 @@
       "shape": [
         64
       ],
-      "f16_offset": 2845,
+      "f16_offset": 4414,
+      "f16_count": 64
+    },
+    "global_ctx.decl_gate": {
+      "kind": "f16",
+      "shape": [
+        64
+      ],
+      "f16_offset": 4478,
       "f16_count": 64
     },
     "head_norm.weight": {
@@ -393,7 +511,7 @@
       "shape": [
         64
       ],
-      "f16_offset": 2909,
+      "f16_offset": 4542,
       "f16_count": 64
     }
   }

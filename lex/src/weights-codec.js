@@ -1,27 +1,39 @@
 // Decodes the embedded weight blob. Zero dependencies and no network fetch: the
-// model is ~30 KB, so inlining it as base64 costs less than the round-trip it
+// model is ~35 KB, so inlining it as base85 costs less than the round-trip it
 // saves and keeps `lex` usable from a single import.
 
-const B64 =
-  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-const LOOKUP = new Uint8Array(128);
-for (let i = 0; i < B64.length; i++) LOOKUP[B64.charCodeAt(i)] = i;
+// 85 symbols packing 4 bytes into 5 characters (25% overhead) instead of
+// base64's 3-into-4 (33%) -- the same alphabet and padding rule as Python's
+// stdlib base64.b85encode/b85decode, so bundle_lex.py can just call that
+// directly rather than shipping a second implementation to stay in sync with.
+const B85 =
+  '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~';
+const B85_LOOKUP = new Uint8Array(128);
+for (let i = 0; i < B85.length; i++) B85_LOOKUP[B85.charCodeAt(i)] = i;
 
-/** base64url -> bytes, without relying on atob (absent in some runtimes). */
-export function decodeBase64(str) {
-  const n = str.length;
-  const out = new Uint8Array((n * 3) >> 2);
+/**
+ * base85 -> bytes. A short final group is padded with '~' (the alphabet's
+ * highest-value character) up to 5 characters before decoding, then the
+ * corresponding number of trailing bytes is dropped -- the exact inverse of
+ * how b85encode pads with zero bytes and truncates output characters.
+ */
+export function decodeBase85(str) {
+  const padding = (5 - (str.length % 5)) % 5;
+  const n = str.length + padding;
+  const out = new Uint8Array((n / 5) * 4);
   let o = 0;
-  for (let i = 0; i < n; i += 4) {
-    const a = LOOKUP[str.charCodeAt(i)];
-    const b = LOOKUP[str.charCodeAt(i + 1)];
-    const c = i + 2 < n ? LOOKUP[str.charCodeAt(i + 2)] : 0;
-    const d = i + 3 < n ? LOOKUP[str.charCodeAt(i + 3)] : 0;
-    out[o++] = (a << 2) | (b >> 4);
-    if (i + 2 < n) out[o++] = ((b & 15) << 4) | (c >> 2);
-    if (i + 3 < n) out[o++] = ((c & 3) << 6) | d;
+  for (let i = 0; i < n; i += 5) {
+    let acc = 0;
+    for (let j = 0; j < 5; j++) {
+      const k = i + j;
+      acc = acc * 85 + B85_LOOKUP[k < str.length ? str.charCodeAt(k) : 126]; // 126 = '~'
+    }
+    out[o++] = (acc >>> 24) & 255;
+    out[o++] = (acc >>> 16) & 255;
+    out[o++] = (acc >>> 8) & 255;
+    out[o++] = acc & 255;
   }
-  return out.subarray(0, o);
+  return out.subarray(0, out.length - padding);
 }
 
 /**

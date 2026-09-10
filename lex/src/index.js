@@ -10,8 +10,8 @@
 
 import { tokenize } from './tokenizer.js';
 import { LexRuntime, CLASS_NAMES } from './runtime.js';
-import { decodeBase64, unpackWeights } from './weights-codec.js';
-import { WEIGHTS_B64, META, PIPELINE } from './weights.js';
+import { decodeBase85, unpackWeights } from './weights-codec.js';
+import { WEIGHTS_B85, META, PIPELINE } from './weights.js';
 import { SHADER } from './shader.js';
 
 export { CLASS_NAMES };
@@ -91,7 +91,7 @@ let shared = null;
 export async function createLexer(options = {}) {
   const { shared: useShared = true } = options;
   if (useShared && shared) return shared;
-  const bytes = decodeBase64(WEIGHTS_B64);
+  const bytes = decodeBase85(WEIGHTS_B85);
   const { planes, fp } = unpackWeights(bytes, META);
   const runtime = await LexRuntime.create({
     shader: SHADER, planes, fp, steps: PIPELINE, dim: META.config.dim,

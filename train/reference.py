@@ -78,35 +78,49 @@ class Reference:
         up = up.reshape(cfg['n_layers'], 2, cfg['dim'])
         strength = self.F('film.strength').reshape(cfg['n_layers'], cfg['dim'])
 
+        x_orig = x.copy()
         for L in range(cfg['n_layers']):
             h = _rms_norm(x, self.F(f'layers.{L}.norm.weight'))
             gamma = 1.0 + strength[L] * np.tanh(up[L, 0])
             beta = strength[L] * np.tanh(up[L, 1])
             h = h * gamma + beta
             k = cfg['kernel_size']
-            pad = k // 2
+            dils = cfg.get('dilations', (1, 2, 4))
+            dil = dils[L] if L < len(dils) else 1
+            pad = (k // 2) * dil
             hp = np.pad(h, ((pad, pad), (0, 0)))
             dw = self.W(f'layers.{L}.dw')              # (D, k)
             conv = np.zeros_like(h)
             for j in range(k):
-                conv += hp[j:j + T] * dw[:, j]
+                offset = j * dil
+                conv += hp[offset:offset + T] * dw[:, j]
             conv += self.B(f'layers.{L}.dw')
 
             proj = conv @ self.W(f'layers.{L}.proj_in').T + self.B(f'layers.{L}.proj_in')
             cand, gate = proj[:, :D], proj[:, D:]
             b = np.tanh(cand) * _sigmoid(gate)
 
-            af = _sigmoid(self.F(f'layers.{L}.decay_f'))
-            ab = _sigmoid(self.F(f'layers.{L}.decay_b'))
+            has_reset = f'layers.{L}.reset_f' in self.meta['tensors']
+            if has_reset:
+                rf = np.log1p(np.exp(self.F(f'layers.{L}.reset_f')))[None, :]
+                rb = np.log1p(np.exp(self.F(f'layers.{L}.reset_b')))[None, :]
+                af = _sigmoid(self.F(f'layers.{L}.decay_f')[None, :] - rf * np.abs(b))
+                ab = _sigmoid(self.F(f'layers.{L}.decay_b')[None, :] - rb * np.abs(b))
+            else:
+                af = _sigmoid(self.F(f'layers.{L}.decay_f'))
+                ab = _sigmoid(self.F(f'layers.{L}.decay_b'))
+
             fwd = np.zeros_like(b)
             acc = np.zeros(D, dtype=np.float32)
             for t in range(T):
-                acc = af * acc + b[t]
+                aft = af[t] if has_reset else af
+                acc = aft * acc + b[t]
                 fwd[t] = acc
             bwd = np.zeros_like(b)
             acc = np.zeros(D, dtype=np.float32)
             for t in range(T - 1, -1, -1):
-                acc = ab * acc + b[t]
+                abt = ab[t] if has_reset else ab
+                acc = abt * acc + b[t]
                 bwd[t] = acc
 
             y = (np.concatenate([fwd, bwd], -1) @ self.W(f'layers.{L}.proj_out').T
@@ -118,14 +132,20 @@ class Reference:
         T = x.shape[0]
         mean = np.broadcast_to(x.mean(0), x.shape)
         mx = np.broadcast_to(x.max(0), x.shape)
+        if 'global_ctx.decl_gate' in self.meta['tensors']:
+            dg = _sigmoid(x * self.F('global_ctx.decl_gate'))
+            prefix = np.cumsum(x * dg, axis=0) / np.cumsum(dg, axis=0).clip(min=1.0)
+        else:
+            counts = np.arange(1, T + 1, dtype=np.float32)[:, None]
+            prefix = np.cumsum(x, axis=0) / counts
         counts = np.arange(1, T + 1, dtype=np.float32)[:, None]
-        prefix = np.cumsum(x, axis=0) / counts
         suffix = np.cumsum(x[::-1], axis=0)[::-1] / counts[::-1]
         pooled = np.concatenate([mean, mx, prefix, suffix], axis=-1)
         ctx = np.tanh(pooled @ self.W('global_ctx.summary').T + self.B('global_ctx.summary'))
         g = _sigmoid(x @ self.W('global_ctx.gate').T + self.B('global_ctx.gate'))
 
-        hn = _rms_norm(x, self.F('head_norm.weight'))
+        hw = float(self.F('highway_scale')[0]) if 'highway_scale' in self.meta['tensors'] else 0.0
+        hn = _rms_norm(x + hw * x_orig, self.F('head_norm.weight'))
         cat = np.concatenate([hn, ctx * g], -1)
         hid = _gelu(cat @ self.W('head_hidden').T + self.B('head_hidden'))
         return hid @ self.W('head_out').T + self.B('head_out')

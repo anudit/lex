@@ -8,7 +8,7 @@ several bugs this session came from a bundle and a fixture drifting out of sync.
     uv run python finalize.py
 
 Browser-side checks (the WGSL kernel against the numpy reference, and the
-head-to-head benchmark) still need `npm run dev` in demo/ and a WebGPU browser;
+head-to-head benchmark) still need `bun run dev` in demo/ and a WebGPU browser;
 this prints the URLs at the end.
 """
 
@@ -54,13 +54,14 @@ def main() -> None:
               '--lex-src', args.lex_src])
     run('test suite', py + ['test_all.py'])
 
+    ckpt = f'{args.checkpoint_dir}/best_model.pt'
     if not args.skip_eval:
-        run('held-out test split', py + ['eval.py', '--split', 'test'])
-        run('error breakdown', py + ['diagnose.py'])
-        run('FiLM conditioning', py + ['film_check.py'])
-        run('points remaining to 95%', py + ['headroom_to_95.py'])
+        run('held-out test split', py + ['eval.py', '--checkpoint', ckpt, '--split', 'test'])
+        run('error breakdown', py + ['diagnose.py', '--checkpoint', ckpt])
+        run('FiLM conditioning', py + ['film_check.py', '--checkpoint', ckpt])
+        run('points remaining to 95%', py + ['headroom_to_95.py', '--checkpoint', ckpt])
 
-    print('\n=== browser checks (need `npm run dev` in demo/) ===')
+    print('\n=== browser checks (need `bun run dev` in demo/) ===')
     print('  shader vs numpy reference : http://localhost:5173/validate.html')
     print('  head-to-head benchmark    : http://localhost:5173/')
 
