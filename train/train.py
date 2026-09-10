@@ -129,6 +129,20 @@ def main() -> None:
                     help='rank of the FiLM projection; 0 disables conditioning')
     ap.add_argument('--lang-loss', type=float, default=0.2,
                     help='weight of the auxiliary language loss; 0 disables it')
+    ap.add_argument('--dim', type=int, default=64,
+                    help='per-layer recurrent hidden width')
+    ap.add_argument('--embed-dim', type=int, default=32,
+                    help='embedding table column width')
+    ap.add_argument('--head-hidden', type=int, default=96,
+                    help='classifier MLP hidden width')
+    ap.add_argument('--resume', default='',
+                    help='continue training an existing checkpoint (its own config wins '
+                         'over --film-rank/--dim/--embed-dim/--head-hidden). Skips FP '
+                         'warmup -- the loaded model is already quantization-aware -- and '
+                         'uses a plain decay-only schedule from --lr instead of a fresh '
+                         'OneCycleLR ramp, since restarting the ramp on an already-'
+                         'converged quantized model would push it away from its optimum '
+                         'before re-converging.')
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -161,7 +175,16 @@ def main() -> None:
     val_loader = DataLoader(ds['val'], batch_size=args.batch_size,
                             num_workers=args.workers)
 
-    model = NeuralLexer(LexerConfig(film_rank=args.film_rank)).to(device)
+    resume_ck = None
+    if args.resume:
+        resume_ck = torch.load(args.resume, map_location=device, weights_only=False)
+        model = NeuralLexer(LexerConfig(**resume_ck['config'])).to(device)
+        model.load_state_dict(resume_ck['model_state_dict'])
+        print(f">> resumed {args.resume} (was weighted {100 * resume_ck['weighted']:.2f}%)")
+    else:
+        model = NeuralLexer(LexerConfig(film_rank=args.film_rank, dim=args.dim,
+                                        embed_dim=args.embed_dim,
+                                        head_hidden=args.head_hidden)).to(device)
     size = model.size_report()
     print(f">> model: {size['total_parameters']:,} params, "
           f"{size['packed_kb']:.2f} KB packed (gpu-lexer: 41,321 params, 31.0 KB)")
@@ -179,13 +202,19 @@ def main() -> None:
     opt = torch.optim.AdamW(
         list(model.parameters()) + list(lang_head.parameters()),
         lr=args.lr, weight_decay=0.01)
-    sched = torch.optim.lr_scheduler.OneCycleLR(
-        opt, max_lr=args.lr, total_steps=total_steps, pct_start=0.15)
+    if resume_ck is not None:
+        # No ramp-up: the loaded model is already past warmup, and a fresh
+        # OneCycleLR climbing back to max_lr would shove it away from wherever
+        # QAT had settled before it gets a chance to re-anneal back down.
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=total_steps)
+    else:
+        sched = torch.optim.lr_scheduler.OneCycleLR(
+            opt, max_lr=args.lr, total_steps=total_steps, pct_start=0.15)
 
-    best = -1.0
+    best = resume_ck['weighted'] if resume_ck is not None else -1.0
     history = []
     for epoch in range(1, args.epochs + 1):
-        quant = epoch > args.warmup_epochs
+        quant = resume_ck is not None or epoch > args.warmup_epochs
         model.train()
         model.set_quant(quant)
         t0 = time.time()

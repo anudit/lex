@@ -3,8 +3,9 @@ __pycache__/
 *.pyc
 node_modules/
 train/data_cache/
-train/checkpoints/
+train/checkpoints*
 archive
 train/corpus
 demo/dist
 summary.md
+.DS_Store

@@ -1,8 +1,17 @@
 // lex -- syntax highlighting by a small neural model running on WebGPU.
 //
 // Public surface:
-//   const lex = await createLexer();
-//   const spans = await lex.highlight(code);   // [{type, start, end}, ...]
+//   const spans = await parse(code);   // [{type, start, end}, ...]
+//
+// `parse` matches gpu-lexer's package.json/index.d.ts API exactly (same
+// signature, same lazily-created-and-cached-singleton behavior, same
+// SyntaxSpan shape -- half-open UTF-16 code-unit offsets, spans in source
+// order) so this runtime, shader and weight set can be merged into that
+// package as a drop-in swap later. `createLexer`/`Lexer` below are the
+// lower-level surface `parse` is built on and stay exported for callers
+// (this repo's own demo and validate page included) that want an explicit
+// session, per-token classes, or the debug-stage hook -- none of which
+// gpu-lexer's API exposes.
 //
 // The API is language-agnostic on purpose: there is no grammar to select and no
 // per-language bundle to load. The model reads the same character-level features
@@ -10,8 +19,8 @@
 
 import { tokenize } from './tokenizer.js';
 import { LexRuntime, CLASS_NAMES } from './runtime.js';
-import { decodeBase85, unpackWeights } from './weights-codec.js';
-import { WEIGHTS_B85, META, PIPELINE } from './weights.js';
+import { unpackWeights } from './weights-codec.js';
+import { WEIGHTS_SYM, WEIGHTS_F16_B85, META, PIPELINE } from './weights.js';
 import { SHADER } from './shader.js';
 
 export { CLASS_NAMES };
@@ -91,8 +100,7 @@ let shared = null;
 export async function createLexer(options = {}) {
   const { shared: useShared = true } = options;
   if (useShared && shared) return shared;
-  const bytes = decodeBase85(WEIGHTS_B85);
-  const { planes, fp } = unpackWeights(bytes, META);
+  const { planes, fp } = unpackWeights(WEIGHTS_SYM, WEIGHTS_F16_B85, META);
   const runtime = await LexRuntime.create({
     shader: SHADER, planes, fp, steps: PIPELINE, dim: META.config.dim,
   });
@@ -103,4 +111,16 @@ export async function createLexer(options = {}) {
 
 export function isSupported() {
   return typeof navigator !== 'undefined' && !!navigator.gpu;
+}
+
+/**
+ * gpu-lexer-compatible entry point: identical signature and behavior to that
+ * package's only export, so a caller (or a future merge into gpu-lexer
+ * itself) can swap one for the other without touching call sites.
+ * @param {string} code
+ * @returns {Promise<Array<{type:string,start:number,end:number}>>}
+ */
+export async function parse(code) {
+  const lexer = await createLexer();
+  return lexer.highlight(code);
 }

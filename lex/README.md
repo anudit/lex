@@ -4,11 +4,23 @@ Syntax highlighting from a 35 KB neural model running on WebGPU. Zero
 dependencies, no grammars, no per-language bundles.
 
 ```js
+import { parse } from 'lex';
+
+const spans = await parse(code);
+// [{ type: 'keyword', start: 0, end: 6 }, ...]
+```
+
+`parse` matches [gpu-lexer](https://github.com/shuding/gpu-lexer)'s API
+exactly (same signature, same lazily-created-and-shared device) -- this
+runtime, shader and weight set are meant to merge into that package later as
+a drop-in swap. For an explicit session, per-token classes instead of merged
+spans, or a debug-stage hook, use the lower-level API below.
+
+```js
 import { createLexer } from 'lex';
 
 const lex = await createLexer();
 const spans = await lex.highlight(code);
-// [{ type: 'keyword', start: 0, end: 6 }, ...]
 ```
 
 React:
@@ -30,7 +42,7 @@ model reads those and predicts one of nine classes: `plain`, `comment`, `string`
 `number`, `keyword`, `type`, `function`, `constant`, `operator`.
 
 Because the features are language-agnostic, so is the model. It was trained on
-33 languages, and it will make a reasonable attempt at one it has never seen
+57 languages, and it will make a reasonable attempt at one it has never seen
 rather than failing outright.
 
 The model is 154k parameters, quantized to 3 bits for the embedding table and
@@ -70,9 +82,12 @@ readback. Pass `{ shared: false }` if you need an isolated one.
 
 ## API
 
+- `parse(code)` -> `Promise<Array<{type, start, end}>>`. gpu-lexer-compatible:
+  same signature, same shared-device behavior, whitespace absorbed into
+  surrounding spans.
 - `createLexer(options?)` -> `Promise<Lexer>`. `{ shared = true }`.
-- `lexer.highlight(code)` -> `Promise<Array<{type, start, end}>>`, whitespace
-  absorbed into surrounding spans.
+- `lexer.highlight(code)` -> `Promise<Array<{type, start, end}>>`, what `parse`
+  calls internally.
 - `lexer.classify(code)` -> `Promise<{tokens, classes}>` for custom span logic.
 - `lexer.destroy()` releases GPU resources.
 - `isSupported()` -> whether WebGPU is available.

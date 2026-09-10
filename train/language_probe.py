@@ -68,8 +68,8 @@ def main() -> None:
 
     device = pick_device()
     ds, _ = dp.build(cache=args.dataset)
-    model = NeuralLexer(LexerConfig()).to(device)
     ck = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    model = NeuralLexer(LexerConfig(**ck['config']) if 'config' in ck else LexerConfig()).to(device)
     model.load_state_dict(ck['model_state_dict'])
     model.eval()
     model.set_quant(True)

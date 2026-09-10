@@ -20,42 +20,42 @@ const UP_B: u32 = 1u;
 const UP_S: u32 = 11u;
 const UP_BI: u32 = 75u;
 const FD_P: u32 = 3100u;
-const FD_W: u32 = 192u;
+const FD_W: u32 = 256u;
 const FD_B: u32 = 1u;
 const FD_S: u32 = 139u;
-const FD_BI: u32 = 187u;
-const FU_P: u32 = 3292u;
+const FD_BI: u32 = 203u;
+const FU_P: u32 = 3356u;
 const FU_W: u32 = 768u;
 const FU_B: u32 = 1u;
-const FU_S: u32 = 235u;
-const FU_BI: u32 = 619u;
-const GS_P: u32 = 5716u;
+const FU_S: u32 = 267u;
+const FU_BI: u32 = 651u;
+const GS_P: u32 = 5780u;
 const GS_W: u32 = 512u;
 const GS_B: u32 = 1u;
-const GS_S: u32 = 2539u;
-const GS_BI: u32 = 2603u;
-const GG_P: u32 = 6228u;
+const GS_S: u32 = 2571u;
+const GS_BI: u32 = 2635u;
+const GG_P: u32 = 6292u;
 const GG_W: u32 = 128u;
 const GG_B: u32 = 1u;
-const GG_S: u32 = 2667u;
-const GG_BI: u32 = 2731u;
-const HH_P: u32 = 6356u;
+const GG_S: u32 = 2699u;
+const GG_BI: u32 = 2763u;
+const HH_P: u32 = 6420u;
 const HH_W: u32 = 384u;
 const HH_B: u32 = 1u;
-const HH_S: u32 = 2795u;
-const HH_BI: u32 = 2891u;
-const HO_P: u32 = 6740u;
+const HH_S: u32 = 2827u;
+const HH_BI: u32 = 2923u;
+const HO_P: u32 = 6804u;
 const HO_W: u32 = 27u;
 const HO_B: u32 = 1u;
-const HO_S: u32 = 2987u;
-const HO_BI: u32 = 2996u;
-const HNORM_F: u32 = 4542u;
-const FS_F: u32 = 3006u;
-const FN_F: u32 = 3198u;
+const HO_S: u32 = 3019u;
+const HO_BI: u32 = 3028u;
+const HNORM_F: u32 = 4574u;
+const FS_F: u32 = 3038u;
+const FN_F: u32 = 3230u;
 const NLAYER: u32 = 3u;
-const FILM_RANK: u32 = 48u;
-const DG_F: u32 = 4478u;
-const HW_F: u32 = 3005u;
+const FILM_RANK: u32 = 64u;
+const DG_F: u32 = 4510u;
+const HW_F: u32 = 3037u;
 const FIELD_ROW: array<u32, 10> = array<u32, 10>(0u, 4u, 12u, 140u, 268u, 780u, 908u, 924u, 940u, 972u);
 const FLAG_ROW: u32 = 1004u;
 const NFIELD: u32 = 10u;
@@ -328,7 +328,7 @@ fn l0_pre(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_film = sbase + 6u * job.stride;
     let base_t = wid.x * TILE;
 
-    let gain = fp[3646u + d];
+    let gain = fp[3678u + d];
     // FiLM for this layer: scale and shift produced from the document signature.
     let gamma = scratch[r_film + 2u * DIM + (0u * 2u + 0u) * DIM + d];
     let beta = scratch[r_film + 2u * DIM + (0u * 2u + 1u) * DIM + d];
@@ -361,19 +361,19 @@ fn l0_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_b = sbase + job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[4100u + d * 2u];
-    let pic1 = planes[4100u + d * 2u + 1u];
-    let pig0 = planes[4100u + (DIM + d) * 2u];
-    let pig1 = planes[4100u + (DIM + d) * 2u + 1u];
-    let sc = fp[1131u + d];
-    let sg = fp[1131u + DIM + d];
-    let bc = fp[1259u + d];
-    let bg = fp[1259u + DIM + d];
-    let dbias = fp[1067u + d];
-    let dws = fp[1003u + d];
+    let pic0 = planes[4164u + d * 2u];
+    let pic1 = planes[4164u + d * 2u + 1u];
+    let pig0 = planes[4164u + (DIM + d) * 2u];
+    let pig1 = planes[4164u + (DIM + d) * 2u + 1u];
+    let sc = fp[1163u + d];
+    let sg = fp[1163u + DIM + d];
+    let bc = fp[1291u + d];
+    let bg = fp[1291u + DIM + d];
+    let dbias = fp[1099u + d];
+    let dws = fp[1035u + d];
     var dwv: array<f32, 5>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(4060u, 10u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(4124u, 10u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -413,10 +413,10 @@ fn l0_scan(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_fw = sbase + 2u * job.stride;
     let r_bw = sbase + 3u * job.stride;
 
-    let decay_f = fp[3390u + d];
-    let decay_b = fp[3454u + d];
-    let rf = softplus_s(fp[3518u + d]);
-    let rb = softplus_s(fp[3582u + d]);
+    let decay_f = fp[3422u + d];
+    let decay_b = fp[3486u + d];
+    let rf = softplus_s(fp[3550u + d]);
+    let rb = softplus_s(fp[3614u + d]);
     var hf: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
         let bt = scratch[r_b + t * DIM + d];
@@ -447,13 +447,13 @@ fn l0_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[4356u + d * 4u];
-    let po1 = planes[4356u + d * 4u + 1u];
-    let po2 = planes[4356u + d * 4u + 2u];
-    let po3 = planes[4356u + d * 4u + 3u];
-    let spo = fp[1387u + d];
-    let bpo = fp[1451u + d];
-    let og = sigmoid_s(fp[3326u + d]);
+    let po0 = planes[4420u + d * 4u];
+    let po1 = planes[4420u + d * 4u + 1u];
+    let po2 = planes[4420u + d * 4u + 2u];
+    let po3 = planes[4420u + d * 4u + 3u];
+    let spo = fp[1419u + d];
+    let bpo = fp[1483u + d];
+    let og = sigmoid_s(fp[3358u + d]);
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
@@ -487,7 +487,7 @@ fn l1_pre(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_film = sbase + 6u * job.stride;
     let base_t = wid.x * TILE;
 
-    let gain = fp[4030u + d];
+    let gain = fp[4062u + d];
     // FiLM for this layer: scale and shift produced from the document signature.
     let gamma = scratch[r_film + 2u * DIM + (1u * 2u + 0u) * DIM + d];
     let beta = scratch[r_film + 2u * DIM + (1u * 2u + 1u) * DIM + d];
@@ -520,19 +520,19 @@ fn l1_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_b = sbase + job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[4652u + d * 2u];
-    let pic1 = planes[4652u + d * 2u + 1u];
-    let pig0 = planes[4652u + (DIM + d) * 2u];
-    let pig1 = planes[4652u + (DIM + d) * 2u + 1u];
-    let sc = fp[1643u + d];
-    let sg = fp[1643u + DIM + d];
-    let bc = fp[1771u + d];
-    let bg = fp[1771u + DIM + d];
-    let dbias = fp[1579u + d];
-    let dws = fp[1515u + d];
+    let pic0 = planes[4716u + d * 2u];
+    let pic1 = planes[4716u + d * 2u + 1u];
+    let pig0 = planes[4716u + (DIM + d) * 2u];
+    let pig1 = planes[4716u + (DIM + d) * 2u + 1u];
+    let sc = fp[1675u + d];
+    let sg = fp[1675u + DIM + d];
+    let bc = fp[1803u + d];
+    let bg = fp[1803u + DIM + d];
+    let dbias = fp[1611u + d];
+    let dws = fp[1547u + d];
     var dwv: array<f32, 5>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(4612u, 10u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(4676u, 10u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -572,10 +572,10 @@ fn l1_scan(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_fw = sbase + 2u * job.stride;
     let r_bw = sbase + 3u * job.stride;
 
-    let decay_f = fp[3774u + d];
-    let decay_b = fp[3838u + d];
-    let rf = softplus_s(fp[3902u + d]);
-    let rb = softplus_s(fp[3966u + d]);
+    let decay_f = fp[3806u + d];
+    let decay_b = fp[3870u + d];
+    let rf = softplus_s(fp[3934u + d]);
+    let rb = softplus_s(fp[3998u + d]);
     var hf: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
         let bt = scratch[r_b + t * DIM + d];
@@ -606,13 +606,13 @@ fn l1_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[4908u + d * 4u];
-    let po1 = planes[4908u + d * 4u + 1u];
-    let po2 = planes[4908u + d * 4u + 2u];
-    let po3 = planes[4908u + d * 4u + 3u];
-    let spo = fp[1899u + d];
-    let bpo = fp[1963u + d];
-    let og = sigmoid_s(fp[3710u + d]);
+    let po0 = planes[4972u + d * 4u];
+    let po1 = planes[4972u + d * 4u + 1u];
+    let po2 = planes[4972u + d * 4u + 2u];
+    let po3 = planes[4972u + d * 4u + 3u];
+    let spo = fp[1931u + d];
+    let bpo = fp[1995u + d];
+    let og = sigmoid_s(fp[3742u + d]);
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
@@ -646,7 +646,7 @@ fn l2_pre(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_film = sbase + 6u * job.stride;
     let base_t = wid.x * TILE;
 
-    let gain = fp[4414u + d];
+    let gain = fp[4446u + d];
     // FiLM for this layer: scale and shift produced from the document signature.
     let gamma = scratch[r_film + 2u * DIM + (2u * 2u + 0u) * DIM + d];
     let beta = scratch[r_film + 2u * DIM + (2u * 2u + 1u) * DIM + d];
@@ -679,19 +679,19 @@ fn l2_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_b = sbase + job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[5204u + d * 2u];
-    let pic1 = planes[5204u + d * 2u + 1u];
-    let pig0 = planes[5204u + (DIM + d) * 2u];
-    let pig1 = planes[5204u + (DIM + d) * 2u + 1u];
-    let sc = fp[2155u + d];
-    let sg = fp[2155u + DIM + d];
-    let bc = fp[2283u + d];
-    let bg = fp[2283u + DIM + d];
-    let dbias = fp[2091u + d];
-    let dws = fp[2027u + d];
+    let pic0 = planes[5268u + d * 2u];
+    let pic1 = planes[5268u + d * 2u + 1u];
+    let pig0 = planes[5268u + (DIM + d) * 2u];
+    let pig1 = planes[5268u + (DIM + d) * 2u + 1u];
+    let sc = fp[2187u + d];
+    let sg = fp[2187u + DIM + d];
+    let bc = fp[2315u + d];
+    let bg = fp[2315u + DIM + d];
+    let dbias = fp[2123u + d];
+    let dws = fp[2059u + d];
     var dwv: array<f32, 5>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(5164u, 10u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(5228u, 10u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -731,10 +731,10 @@ fn l2_scan(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_fw = sbase + 2u * job.stride;
     let r_bw = sbase + 3u * job.stride;
 
-    let decay_f = fp[4158u + d];
-    let decay_b = fp[4222u + d];
-    let rf = softplus_s(fp[4286u + d]);
-    let rb = softplus_s(fp[4350u + d]);
+    let decay_f = fp[4190u + d];
+    let decay_b = fp[4254u + d];
+    let rf = softplus_s(fp[4318u + d]);
+    let rb = softplus_s(fp[4382u + d]);
     var hf: f32 = 0.0;
     for (var t: u32 = 0u; t < T; t = t + 1u) {
         let bt = scratch[r_b + t * DIM + d];
@@ -765,13 +765,13 @@ fn l2_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[5460u + d * 4u];
-    let po1 = planes[5460u + d * 4u + 1u];
-    let po2 = planes[5460u + d * 4u + 2u];
-    let po3 = planes[5460u + d * 4u + 3u];
-    let spo = fp[2411u + d];
-    let bpo = fp[2475u + d];
-    let og = sigmoid_s(fp[4094u + d]);
+    let po0 = planes[5524u + d * 4u];
+    let po1 = planes[5524u + d * 4u + 1u];
+    let po2 = planes[5524u + d * 4u + 2u];
+    let po3 = planes[5524u + d * 4u + 3u];
+    let spo = fp[2443u + d];
+    let bpo = fp[2507u + d];
+    let og = sigmoid_s(fp[4126u + d]);
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
@@ -804,7 +804,7 @@ fn pool_reduce(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_suf = sbase + job.stride;          // reuses the scan-input region
     let r_stat = sbase + 5u * job.stride;
 
-    let dgw = fp[4478u + d];
+    let dgw = fp[4510u + d];
     var s: f32 = 0.0;    // plain sum, still feeds the sequence-mean stat below
     var sg: f32 = 0.0;   // decl-gated sum, feeds the prefix mean only
     var sdg: f32 = 0.0;

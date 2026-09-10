@@ -5,13 +5,20 @@
   "type": "module",
   "license": "MIT",
   "sideEffects": false,
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./src/index.d.ts",
   "files": [
     "src",
     "LICENSE",
     "README.md"
   ],
   "exports": {
-    ".": "./src/index.js",
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    },
     "./react": "./src/react.js",
     "./tokenizer": "./src/tokenizer.js",
     "./runtime": "./src/runtime.js",

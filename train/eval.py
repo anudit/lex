@@ -76,8 +76,8 @@ def main() -> None:
     ds, meta = dp.build(cache=args.dataset)
     loader = DataLoader(ds[args.split], batch_size=args.batch_size, num_workers=2)
 
-    model = NeuralLexer(LexerConfig()).to(device)
     ck = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    model = NeuralLexer(LexerConfig(**ck['config']) if 'config' in ck else LexerConfig()).to(device)
     model.load_state_dict(ck['model_state_dict'])
 
     crit = torch.nn.CrossEntropyLoss(ignore_index=dp.MASK)

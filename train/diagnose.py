@@ -77,8 +77,8 @@ def main() -> None:
     train_sample = DataLoader(ds['train'], batch_size=args.batch_size,
                               num_workers=2, shuffle=True)
 
-    model = NeuralLexer(LexerConfig()).to(device)
     ck = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    model = NeuralLexer(LexerConfig(**ck['config']) if 'config' in ck else LexerConfig()).to(device)
     model.load_state_dict(ck['model_state_dict'])
 
     q = run(model, val, device, quant=True)

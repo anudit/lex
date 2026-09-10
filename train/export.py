@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from model import NeuralLexer, FIELD_SIZES, N_FLAG_BITS
+from model import NeuralLexer, LexerConfig, FIELD_SIZES, N_FLAG_BITS
 from quant import QuantEmbedding, QuantLinear, pack_bitplanes
 
 
@@ -242,6 +242,8 @@ if __name__ == '__main__':
     m = NeuralLexer()
     if os.path.exists(args.checkpoint):
         ck = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
+        if 'config' in ck:
+            m = NeuralLexer(LexerConfig(**ck['config']))
         m.load_state_dict(ck['model_state_dict'])
     r = export_model(m, args.out)
     print(f"weights.bin {r['kb']:.2f} KB   round-trip max error {r['max_abs_error']:.2e}")
