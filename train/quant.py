@@ -54,7 +54,8 @@ def quantize(weight: torch.Tensor, bits: int, scale: torch.Tensor) -> torch.Tens
 
 
 def row_scale(weight: torch.Tensor, bits: int,
-              groups: torch.Tensor | None = None) -> torch.Tensor:
+              groups: torch.Tensor | None = None,
+              n_groups: int | None = None) -> torch.Tensor:
     """Scale derived from the weights, so it needs no separate training.
 
     For 1-bit the mean absolute value is the least-squares optimal scale for
@@ -74,7 +75,10 @@ def row_scale(weight: torch.Tensor, bits: int,
             s = weight.abs().amax(dim=-1, keepdim=True) / qmax
         return s.clamp_min(1e-8)
 
-    n_groups = int(groups.max().item()) + 1
+    # Passing the module's static group count avoids a device-to-host .item()
+    # synchronization on every CUDA forward and keeps torch.compile in one graph.
+    if n_groups is None:
+        n_groups = int(groups.max().item()) + 1
     flat = weight.abs()
     if bits == 1:
         sums = torch.zeros(n_groups, device=weight.device, dtype=weight.dtype)
@@ -150,7 +154,7 @@ class QuantEmbedding(nn.Module):
             self.n_scales = int(groups.max().item()) + 1
 
     def _scale(self) -> torch.Tensor:
-        return row_scale(self.weight, self.bits, self.groups)
+        return row_scale(self.weight, self.bits, self.groups, self.n_scales)
 
     def effective(self) -> torch.Tensor:
         if not self.quant_enabled:
@@ -162,7 +166,7 @@ class QuantEmbedding(nn.Module):
 
     def export_tensors(self) -> dict:
         w = self.weight.detach()
-        s = row_scale(w, self.bits, self.groups)
+        s = row_scale(w, self.bits, self.groups, self.n_scales)
         # Only the distinct group scales ship; the group id of a row is implied by
         # the field offset table the shader already needs.
         if self.groups is None:

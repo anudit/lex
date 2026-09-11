@@ -11,3 +11,5 @@ summary.md
 .DS_Store
 lex/.DS_Store
 train/*.log
+train_large/_stack_download
+train_large/*.txt

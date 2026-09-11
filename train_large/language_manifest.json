@@ -1,0 +1,3816 @@
+{
+  "format": "lex-large-language-manifest-v1",
+  "generated": "2026-09-11T13:08:14.250Z",
+  "highlightJs": {
+    "version": "11.12.0",
+    "canonicalGrammarCount": 193,
+    "releaseCommit": "f7f7d3803bd898e37c017ffb881317f0cde04a70"
+  },
+  "shiki": {
+    "version": "4.4.3"
+  },
+  "githubLinguist": {
+    "commit": "8b57fcfd3e082d8d369c0abd9b5f90f273cf865e"
+  },
+  "languages": [
+    {
+      "id": "1c",
+      "name": "1C:Enterprise",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "1c"
+      },
+      "linguist": "1C Enterprise",
+      "extensions": [
+        ".bsl",
+        ".os"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "abnf",
+      "name": "Augmented Backus-Naur Form",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "abnf"
+      },
+      "linguist": "ABNF",
+      "extensions": [
+        ".abnf"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "accesslog",
+      "name": "Apache Access Log",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "accesslog"
+      },
+      "linguist": null,
+      "extensions": [
+        ".log"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "actionscript",
+      "name": "ActionScript",
+      "aliases": [
+        "as"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "actionscript"
+      },
+      "linguist": "ActionScript",
+      "extensions": [
+        ".as"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "ada",
+      "name": "Ada",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "ada"
+      },
+      "linguist": "Ada",
+      "extensions": [
+        ".ada",
+        ".adb",
+        ".ads"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "angelscript",
+      "name": "AngelScript",
+      "aliases": [
+        "asc"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "angelscript"
+      },
+      "linguist": "AngelScript",
+      "extensions": [
+        ".angelscript",
+        ".as"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "apache",
+      "name": "Apache config",
+      "aliases": [
+        "apacheconf"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "apache"
+      },
+      "linguist": "ApacheConf",
+      "extensions": [
+        ".apacheconf",
+        ".conf",
+        ".vhost"
+      ],
+      "filenames": [
+        ".htaccess",
+        "apache2.conf",
+        "httpd.conf"
+      ]
+    },
+    {
+      "id": "applescript",
+      "name": "AppleScript",
+      "aliases": [
+        "osascript"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "applescript"
+      },
+      "linguist": "AppleScript",
+      "extensions": [
+        ".applescript",
+        ".scpt"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "arcade",
+      "name": "ArcGIS Arcade",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "arcade"
+      },
+      "linguist": null,
+      "extensions": [
+        ".arcade"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "arduino",
+      "name": "Arduino",
+      "aliases": [
+        "ino"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "arduino"
+      },
+      "linguist": null,
+      "extensions": [
+        ".ino"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "armasm",
+      "name": "ARM Assembly",
+      "aliases": [
+        "arm"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "asm"
+      },
+      "linguist": "Assembly",
+      "extensions": [
+        ".a51",
+        ".asm",
+        ".i",
+        ".inc",
+        ".nas",
+        ".nasm",
+        ".s"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "asciidoc",
+      "name": "AsciiDoc",
+      "aliases": [
+        "adoc"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "asciidoc"
+      },
+      "linguist": "AsciiDoc",
+      "extensions": [
+        ".adoc",
+        ".asc",
+        ".asciidoc"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "aspectj",
+      "name": "AspectJ",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "aspectj"
+      },
+      "linguist": "AspectJ",
+      "extensions": [
+        ".aj"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "autohotkey",
+      "name": "AutoHotkey",
+      "aliases": [
+        "ahk"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "autohotkey"
+      },
+      "linguist": "AutoHotkey",
+      "extensions": [
+        ".ah1",
+        ".ah2",
+        ".ahk",
+        ".ahkl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "autoit",
+      "name": "AutoIt",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "autoit"
+      },
+      "linguist": "AutoIt",
+      "extensions": [
+        ".au3"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "avrasm",
+      "name": "AVR Assembly",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "avrasm"
+      },
+      "linguist": null,
+      "extensions": [
+        ".asm"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "awk",
+      "name": "Awk",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "awk"
+      },
+      "linguist": "Awk",
+      "extensions": [
+        ".auk",
+        ".awk",
+        ".gawk",
+        ".mawk",
+        ".nawk"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "axapta",
+      "name": "X++",
+      "aliases": [
+        "x++"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "axapta"
+      },
+      "linguist": null,
+      "extensions": [
+        ".xpp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "bash",
+      "name": "Bash",
+      "aliases": [
+        "sh",
+        "zsh"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "shellscript"
+      },
+      "linguist": "Shell",
+      "extensions": [
+        ".bash",
+        ".bats",
+        ".cgi",
+        ".command",
+        ".fcgi",
+        ".ksh",
+        ".pacscript",
+        ".sbatch",
+        ".sh",
+        ".sh.in",
+        ".slurm",
+        ".tmux",
+        ".tool",
+        ".trigger",
+        ".zsh",
+        ".zsh-theme"
+      ],
+      "filenames": [
+        ".bash_aliases",
+        ".bash_functions",
+        ".bash_history",
+        ".bash_logout",
+        ".bash_profile",
+        ".bashrc",
+        ".cshrc",
+        ".envrc",
+        ".flaskenv",
+        ".kshrc",
+        ".login",
+        ".profile",
+        ".tmux.conf",
+        ".xinitrc",
+        ".xsession",
+        ".zlogin",
+        ".zlogout",
+        ".zprofile",
+        ".zshenv",
+        ".zshrc",
+        "9fs",
+        "PKGBUILD",
+        "bash_aliases",
+        "bash_logout",
+        "bash_profile",
+        "bashrc",
+        "cshrc",
+        "gradlew",
+        "kshrc",
+        "login",
+        "man",
+        "mvnw",
+        "profile",
+        "tmux.conf",
+        "xinitrc",
+        "xsession",
+        "zlogin",
+        "zlogout",
+        "zprofile",
+        "zshenv",
+        "zshrc"
+      ]
+    },
+    {
+      "id": "basic",
+      "name": "BASIC",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "basic"
+      },
+      "linguist": "BASIC",
+      "extensions": [
+        ".bas"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "bnf",
+      "name": "Backus–Naur Form",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "bnf"
+      },
+      "linguist": null,
+      "extensions": [
+        ".bnf"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "brainfuck",
+      "name": "Brainfuck",
+      "aliases": [
+        "bf"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "brainfuck"
+      },
+      "linguist": "Brainfuck",
+      "extensions": [
+        ".b",
+        ".bf"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "c",
+      "name": "C",
+      "aliases": [
+        "h"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "c"
+      },
+      "linguist": "C++",
+      "extensions": [
+        ".c++",
+        ".cc",
+        ".cp",
+        ".cpp",
+        ".cppm",
+        ".cxx",
+        ".h",
+        ".h++",
+        ".hh",
+        ".hpp",
+        ".hxx",
+        ".inc",
+        ".inl",
+        ".ino",
+        ".ipp",
+        ".ixx",
+        ".re",
+        ".tcc",
+        ".tpp",
+        ".txx"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "cal",
+      "name": "C/AL",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "cal"
+      },
+      "linguist": null,
+      "extensions": [
+        ".cl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "capnproto",
+      "name": "Cap’n Proto",
+      "aliases": [
+        "capnp"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "capnproto"
+      },
+      "linguist": "Cap'n Proto",
+      "extensions": [
+        ".capnp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "ceylon",
+      "name": "Ceylon",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "ceylon"
+      },
+      "linguist": "Ceylon",
+      "extensions": [
+        ".ceylon"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "clean",
+      "name": "Clean",
+      "aliases": [
+        "dcl",
+        "icl"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "clean"
+      },
+      "linguist": "Clean",
+      "extensions": [
+        ".dcl",
+        ".icl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "clojure",
+      "name": "Clojure",
+      "aliases": [
+        "clj",
+        "edn"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "clojure"
+      },
+      "linguist": "Clojure",
+      "extensions": [
+        ".bb",
+        ".boot",
+        ".cl2",
+        ".clj",
+        ".cljc",
+        ".cljs",
+        ".cljs.hl",
+        ".cljscm",
+        ".cljx",
+        ".hic"
+      ],
+      "filenames": [
+        "riemann.config"
+      ]
+    },
+    {
+      "id": "clojure-repl",
+      "name": "Clojure REPL",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "clojure-repl"
+      },
+      "linguist": null,
+      "extensions": [
+        ".clj"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "cmake",
+      "name": "CMake",
+      "aliases": [
+        "cmake.in"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "cmake"
+      },
+      "linguist": "CMake",
+      "extensions": [
+        ".cmake",
+        ".cmake.in"
+      ],
+      "filenames": [
+        "CMakeLists.txt"
+      ]
+    },
+    {
+      "id": "coffeescript",
+      "name": "CoffeeScript",
+      "aliases": [
+        "coffee",
+        "cson",
+        "iced"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "coffeescript"
+      },
+      "linguist": "CoffeeScript",
+      "extensions": [
+        "._coffee",
+        ".cake",
+        ".cjsx",
+        ".coffee",
+        ".coffee.erb",
+        ".iced"
+      ],
+      "filenames": [
+        "Cakefile"
+      ]
+    },
+    {
+      "id": "coq",
+      "name": "Coq",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "coq"
+      },
+      "linguist": "Rocq Prover",
+      "extensions": [
+        ".coq",
+        ".v"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "cos",
+      "name": "Caché Object Script",
+      "aliases": [
+        "cls"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "cos"
+      },
+      "linguist": null,
+      "extensions": [
+        ".cls"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "cpp",
+      "name": "C++",
+      "aliases": [
+        "c++",
+        "cc",
+        "cxx",
+        "h++",
+        "hh",
+        "hpp",
+        "hxx"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "cpp"
+      },
+      "linguist": "C++",
+      "extensions": [
+        ".c++",
+        ".cc",
+        ".cp",
+        ".cpp",
+        ".cppm",
+        ".cxx",
+        ".h",
+        ".h++",
+        ".hh",
+        ".hpp",
+        ".hxx",
+        ".inc",
+        ".inl",
+        ".ino",
+        ".ipp",
+        ".ixx",
+        ".re",
+        ".tcc",
+        ".tpp",
+        ".txx"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "crmsh",
+      "name": "crmsh",
+      "aliases": [
+        "crm",
+        "pcmk"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "crmsh"
+      },
+      "linguist": null,
+      "extensions": [
+        ".crm"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "crystal",
+      "name": "Crystal",
+      "aliases": [
+        "cr"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "crystal"
+      },
+      "linguist": "Crystal",
+      "extensions": [
+        ".cr"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "csharp",
+      "name": "C#",
+      "aliases": [
+        "c#",
+        "cs"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "csharp"
+      },
+      "linguist": "C++",
+      "extensions": [
+        ".c++",
+        ".cc",
+        ".cp",
+        ".cpp",
+        ".cppm",
+        ".cxx",
+        ".h",
+        ".h++",
+        ".hh",
+        ".hpp",
+        ".hxx",
+        ".inc",
+        ".inl",
+        ".ino",
+        ".ipp",
+        ".ixx",
+        ".re",
+        ".tcc",
+        ".tpp",
+        ".txx"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "csp",
+      "name": "CSP",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "csp"
+      },
+      "linguist": null,
+      "extensions": [
+        ".csp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "css",
+      "name": "CSS",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "css"
+      },
+      "linguist": "CSS",
+      "extensions": [
+        ".css"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "d",
+      "name": "D",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "d"
+      },
+      "linguist": "D",
+      "extensions": [
+        ".d",
+        ".di"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "dart",
+      "name": "Dart",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "dart"
+      },
+      "linguist": "Dart",
+      "extensions": [
+        ".dart"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "delphi",
+      "name": "Delphi",
+      "aliases": [
+        "dfm",
+        "dpr",
+        "pas",
+        "pascal"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "pascal"
+      },
+      "linguist": "Pascal",
+      "extensions": [
+        ".dfm",
+        ".dpr",
+        ".inc",
+        ".lpr",
+        ".pas",
+        ".pascal",
+        ".pp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "diff",
+      "name": "Diff",
+      "aliases": [
+        "patch"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "diff"
+      },
+      "linguist": "Diff",
+      "extensions": [
+        ".diff",
+        ".patch"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "django",
+      "name": "Django",
+      "aliases": [
+        "jinja"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "django"
+      },
+      "linguist": "Jinja",
+      "extensions": [
+        ".html",
+        ".j2",
+        ".jinja",
+        ".jinja2"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "dns",
+      "name": "DNS Zone",
+      "aliases": [
+        "bind",
+        "zone"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "dns"
+      },
+      "linguist": "DNS Zone",
+      "extensions": [
+        ".arpa",
+        ".zone"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "dockerfile",
+      "name": "Dockerfile",
+      "aliases": [
+        "docker"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "dockerfile"
+      },
+      "linguist": "Dockerfile",
+      "extensions": [
+        ".containerfile",
+        ".dockerfile"
+      ],
+      "filenames": [
+        "Containerfile",
+        "Dockerfile"
+      ]
+    },
+    {
+      "id": "dos",
+      "name": "Batch file (DOS)",
+      "aliases": [
+        "bat",
+        "batch",
+        "cmd"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "dos"
+      },
+      "linguist": "Batchfile",
+      "extensions": [
+        ".bat",
+        ".cmd"
+      ],
+      "filenames": [
+        "gradlew.bat",
+        "mvnw.cmd"
+      ]
+    },
+    {
+      "id": "dsconfig",
+      "name": "dsconfig",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "dsconfig"
+      },
+      "linguist": null,
+      "extensions": [
+        ".conf"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "dts",
+      "name": "Device Tree",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "dts"
+      },
+      "linguist": null,
+      "extensions": [
+        ".dts"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "dust",
+      "name": "Dust",
+      "aliases": [
+        "dst"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "dust"
+      },
+      "linguist": null,
+      "extensions": [
+        ".dust"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "ebnf",
+      "name": "Extended Backus-Naur Form",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "ebnf"
+      },
+      "linguist": "EBNF",
+      "extensions": [
+        ".ebnf"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "elixir",
+      "name": "Elixir",
+      "aliases": [
+        "ex",
+        "exs"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "elixir"
+      },
+      "linguist": "Elixir",
+      "extensions": [
+        ".ex",
+        ".exs"
+      ],
+      "filenames": [
+        "mix.lock"
+      ]
+    },
+    {
+      "id": "elm",
+      "name": "Elm",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "elm"
+      },
+      "linguist": "Elm",
+      "extensions": [
+        ".elm"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "erb",
+      "name": "ERB",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "erb"
+      },
+      "linguist": "HTML+ERB",
+      "extensions": [
+        ".erb",
+        ".erb.deface",
+        ".rhtml"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "erlang",
+      "name": "Erlang",
+      "aliases": [
+        "erl"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "erlang"
+      },
+      "linguist": "Erlang",
+      "extensions": [
+        ".app",
+        ".app.src",
+        ".erl",
+        ".es",
+        ".escript",
+        ".hrl",
+        ".xrl",
+        ".yrl"
+      ],
+      "filenames": [
+        "Emakefile",
+        "rebar.config",
+        "rebar.config.lock",
+        "rebar.lock"
+      ]
+    },
+    {
+      "id": "erlang-repl",
+      "name": "Erlang REPL",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "erlang-repl"
+      },
+      "linguist": null,
+      "extensions": [
+        ".erl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "excel",
+      "name": "Excel formulae",
+      "aliases": [
+        "xls",
+        "xlsx"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "excel"
+      },
+      "linguist": null,
+      "extensions": [
+        ".xlsx"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "fix",
+      "name": "FIX",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "fix"
+      },
+      "linguist": null,
+      "extensions": [
+        ".fix"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "flix",
+      "name": "Flix",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "flix"
+      },
+      "linguist": "Flix",
+      "extensions": [
+        ".flix"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "fortran",
+      "name": "Fortran",
+      "aliases": [
+        "f90",
+        "f95"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "fortran-free-form"
+      },
+      "linguist": "Fortran Free Form",
+      "extensions": [
+        ".f03",
+        ".f08",
+        ".f90",
+        ".f95"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "freedesktop",
+      "name": "FreeDesktop config",
+      "aliases": [
+        "desktop",
+        "systemd"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "freedesktop"
+      },
+      "linguist": "desktop",
+      "extensions": [
+        ".desktop",
+        ".desktop.in"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "fsharp",
+      "name": "F#",
+      "aliases": [
+        "f#",
+        "fs"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "fsharp"
+      },
+      "linguist": "F*",
+      "extensions": [
+        ".fst",
+        ".fsti"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "gams",
+      "name": "GAMS",
+      "aliases": [
+        "gms"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "gams"
+      },
+      "linguist": "GAMS",
+      "extensions": [
+        ".gms"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "gauss",
+      "name": "GAUSS",
+      "aliases": [
+        "gss"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "gauss"
+      },
+      "linguist": null,
+      "extensions": [
+        ".gss"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "gcode",
+      "name": "G-code (ISO 6983)",
+      "aliases": [
+        "nc"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "gcode"
+      },
+      "linguist": "G-code",
+      "extensions": [
+        ".cnc",
+        ".g",
+        ".gco",
+        ".gcode"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "gherkin",
+      "name": "Gherkin",
+      "aliases": [
+        "feature"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "gherkin"
+      },
+      "linguist": "Gherkin",
+      "extensions": [
+        ".feature",
+        ".story"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "glsl",
+      "name": "GLSL",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "glsl"
+      },
+      "linguist": "GLSL",
+      "extensions": [
+        ".fp",
+        ".frag",
+        ".frg",
+        ".fs",
+        ".fsh",
+        ".fshader",
+        ".geo",
+        ".geom",
+        ".glsl",
+        ".glslf",
+        ".glslv",
+        ".gs",
+        ".gshader",
+        ".rchit",
+        ".rmiss",
+        ".shader",
+        ".tesc",
+        ".tese",
+        ".vert",
+        ".vrx",
+        ".vs",
+        ".vsh",
+        ".vshader"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "gml",
+      "name": "GML",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "gml"
+      },
+      "linguist": null,
+      "extensions": [
+        ".gml"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "go",
+      "name": "Go",
+      "aliases": [
+        "golang"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "go"
+      },
+      "linguist": "Go",
+      "extensions": [
+        ".go"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "golo",
+      "name": "Golo",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "golo"
+      },
+      "linguist": "Golo",
+      "extensions": [
+        ".golo"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "gradle",
+      "name": "Gradle",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "gradle"
+      },
+      "linguist": "Gradle",
+      "extensions": [
+        ".gradle"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "graphql",
+      "name": "GraphQL",
+      "aliases": [
+        "gql"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "graphql"
+      },
+      "linguist": "GraphQL",
+      "extensions": [
+        ".gql",
+        ".graphql",
+        ".graphqls"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "groovy",
+      "name": "Groovy",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "groovy"
+      },
+      "linguist": "Groovy",
+      "extensions": [
+        ".groovy",
+        ".grt",
+        ".gtpl",
+        ".gvy"
+      ],
+      "filenames": [
+        "Jenkinsfile"
+      ]
+    },
+    {
+      "id": "haml",
+      "name": "HAML",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "haml"
+      },
+      "linguist": "Haml",
+      "extensions": [
+        ".haml",
+        ".haml.deface"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "handlebars",
+      "name": "Handlebars",
+      "aliases": [
+        "hbs",
+        "html.handlebars",
+        "html.hbs",
+        "htmlbars"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "handlebars"
+      },
+      "linguist": "Handlebars",
+      "extensions": [
+        ".handlebars",
+        ".hbs"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "haskell",
+      "name": "Haskell",
+      "aliases": [
+        "hs"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "haskell"
+      },
+      "linguist": "Haskell",
+      "extensions": [
+        ".hs",
+        ".hs-boot",
+        ".hsc"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "haxe",
+      "name": "Haxe",
+      "aliases": [
+        "hx"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "haxe"
+      },
+      "linguist": "Haxe",
+      "extensions": [
+        ".hx",
+        ".hxsl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "hsp",
+      "name": "HSP",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "hsp"
+      },
+      "linguist": null,
+      "extensions": [
+        ".hsp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "http",
+      "name": "HTTP",
+      "aliases": [
+        "https"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "http"
+      },
+      "linguist": "HTTP",
+      "extensions": [
+        ".http"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "hy",
+      "name": "Hy",
+      "aliases": [
+        "hylang"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "hy"
+      },
+      "linguist": "Hy",
+      "extensions": [
+        ".hy"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "inform7",
+      "name": "Inform 7",
+      "aliases": [
+        "i7"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "inform7"
+      },
+      "linguist": "Inform 7",
+      "extensions": [
+        ".i7x",
+        ".ni"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "ini",
+      "name": "TOML, also INI",
+      "aliases": [
+        "toml"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "ini"
+      },
+      "linguist": "INI",
+      "extensions": [
+        ".cfg",
+        ".cnf",
+        ".container",
+        ".dof",
+        ".frm",
+        ".ini",
+        ".lektorproject",
+        ".mount",
+        ".network",
+        ".prefs",
+        ".pro",
+        ".properties",
+        ".service",
+        ".socket",
+        ".target",
+        ".timer",
+        ".url"
+      ],
+      "filenames": [
+        ".buckconfig",
+        ".coveragerc",
+        ".flake8",
+        ".gitreview",
+        ".pylintrc",
+        "HOSTS",
+        "buildozer.spec",
+        "hosts",
+        "pylintrc",
+        "vlcrc"
+      ]
+    },
+    {
+      "id": "irpf90",
+      "name": "IRPF90",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "irpf90"
+      },
+      "linguist": null,
+      "extensions": [
+        ".irp.f"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "isbl",
+      "name": "ISBL",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "isbl"
+      },
+      "linguist": null,
+      "extensions": [
+        ".q"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "java",
+      "name": "Java",
+      "aliases": [
+        "jsp"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "java"
+      },
+      "linguist": "Java",
+      "extensions": [
+        ".jav",
+        ".java",
+        ".jsh"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "javascript",
+      "name": "JavaScript",
+      "aliases": [
+        "cjs",
+        "js",
+        "jsx",
+        "mjs"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "javascript"
+      },
+      "linguist": "JavaScript",
+      "extensions": [
+        "._js",
+        ".bones",
+        ".cjs",
+        ".es",
+        ".es6",
+        ".frag",
+        ".gs",
+        ".jake",
+        ".javascript",
+        ".js",
+        ".jsb",
+        ".jscad",
+        ".jsfl",
+        ".jslib",
+        ".jsm",
+        ".jspre",
+        ".jss",
+        ".jsx",
+        ".mjs",
+        ".njs",
+        ".pac",
+        ".sjs",
+        ".ssjs",
+        ".xsjs",
+        ".xsjslib"
+      ],
+      "filenames": [
+        "Jakefile"
+      ]
+    },
+    {
+      "id": "jboss-cli",
+      "name": "JBoss CLI",
+      "aliases": [
+        "wildfly-cli"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "jboss-cli"
+      },
+      "linguist": null,
+      "extensions": [
+        ".cli"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "json",
+      "name": "JSON",
+      "aliases": [
+        "json5",
+        "jsonc"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "json"
+      },
+      "linguist": "JSON",
+      "extensions": [
+        ".4DForm",
+        ".4DProject",
+        ".JSON-tmLanguage",
+        ".avsc",
+        ".geojson",
+        ".gltf",
+        ".har",
+        ".ice",
+        ".json",
+        ".json.example",
+        ".jsonl",
+        ".mcmeta",
+        ".sarif",
+        ".slnlaunch",
+        ".tact",
+        ".tfstate",
+        ".tfstate.backup",
+        ".topojson",
+        ".webapp",
+        ".webmanifest",
+        ".yy",
+        ".yyp"
+      ],
+      "filenames": [
+        ".all-contributorsrc",
+        ".arcconfig",
+        ".auto-changelog",
+        ".c8rc",
+        ".htmlhintrc",
+        ".imgbotconfig",
+        ".nycrc",
+        ".releaserc",
+        ".secrets.baseline",
+        ".tern-config",
+        ".tern-project",
+        ".watchmanconfig",
+        "MODULE.bazel.lock",
+        "Package.resolved",
+        "Pipfile.lock",
+        "bun.lock",
+        "composer.lock",
+        "deno.lock",
+        "flake.lock",
+        "mcmod.info"
+      ]
+    },
+    {
+      "id": "julia",
+      "name": "Julia",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "julia"
+      },
+      "linguist": "Julia",
+      "extensions": [
+        ".jl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "julia-repl",
+      "name": "Julia REPL",
+      "aliases": [
+        "jldoctest"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "julia-repl"
+      },
+      "linguist": "Julia REPL",
+      "extensions": [
+        ".jl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "kotlin",
+      "name": "Kotlin",
+      "aliases": [
+        "kt",
+        "ktm",
+        "kts",
+        "ktx"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "kotlin"
+      },
+      "linguist": "Kotlin",
+      "extensions": [
+        ".kt",
+        ".ktm",
+        ".kts"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "lasso",
+      "name": "Lasso",
+      "aliases": [
+        "lassoscript",
+        "ls"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "lasso"
+      },
+      "linguist": "Lasso",
+      "extensions": [
+        ".las",
+        ".lasso",
+        ".lasso8",
+        ".lasso9"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "latex",
+      "name": "LaTeX",
+      "aliases": [
+        "tex"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "latex"
+      },
+      "linguist": "TeX",
+      "extensions": [
+        ".aux",
+        ".bbx",
+        ".cbx",
+        ".cls",
+        ".dtx",
+        ".ins",
+        ".lbx",
+        ".ltx",
+        ".mkii",
+        ".mkiv",
+        ".mkvi",
+        ".sty",
+        ".tex",
+        ".toc"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "ldif",
+      "name": "LDIF",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "ldif"
+      },
+      "linguist": null,
+      "extensions": [
+        ".ldif"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "leaf",
+      "name": "Leaf",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "leaf"
+      },
+      "linguist": null,
+      "extensions": [
+        ".leaf"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "less",
+      "name": "Less",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "less"
+      },
+      "linguist": "Less",
+      "extensions": [
+        ".less"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "lisp",
+      "name": "Lisp",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "lisp"
+      },
+      "linguist": "Common Lisp",
+      "extensions": [
+        ".asd",
+        ".cl",
+        ".l",
+        ".lisp",
+        ".lsp",
+        ".ny",
+        ".podsl",
+        ".sexp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "livecodeserver",
+      "name": "LiveCode",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "livecodeserver"
+      },
+      "linguist": null,
+      "extensions": [
+        ".lcs"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "livescript",
+      "name": "LiveScript",
+      "aliases": [
+        "ls"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "livescript"
+      },
+      "linguist": "LiveScript",
+      "extensions": [
+        "._ls",
+        ".ls"
+      ],
+      "filenames": [
+        "Slakefile"
+      ]
+    },
+    {
+      "id": "llvm",
+      "name": "LLVM IR",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "llvm"
+      },
+      "linguist": "LLVM",
+      "extensions": [
+        ".ll"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "lsl",
+      "name": "LSL (Linden Scripting Language)",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "lsl"
+      },
+      "linguist": "LSL",
+      "extensions": [
+        ".lsl",
+        ".lslp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "lua",
+      "name": "Lua",
+      "aliases": [
+        "pluto"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "lua"
+      },
+      "linguist": "Lua",
+      "extensions": [
+        ".fcgi",
+        ".lua",
+        ".nse",
+        ".p8",
+        ".pd_lua",
+        ".rbxs",
+        ".rockspec",
+        ".wlua"
+      ],
+      "filenames": [
+        ".luacheckrc"
+      ]
+    },
+    {
+      "id": "makefile",
+      "name": "Makefile",
+      "aliases": [
+        "mak",
+        "make",
+        "mk"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "make"
+      },
+      "linguist": "Makefile",
+      "extensions": [
+        ".d",
+        ".mak",
+        ".make",
+        ".makefile",
+        ".mk",
+        ".mkfile"
+      ],
+      "filenames": [
+        "BSDmakefile",
+        "GNUmakefile",
+        "Kbuild",
+        "Makefile",
+        "Makefile.am",
+        "Makefile.boot",
+        "Makefile.frag",
+        "Makefile.in",
+        "Makefile.inc",
+        "Makefile.pc",
+        "Makefile.wat",
+        "makefile",
+        "makefile.sco",
+        "mkfile"
+      ]
+    },
+    {
+      "id": "markdown",
+      "name": "Markdown",
+      "aliases": [
+        "md",
+        "mkd",
+        "mkdown"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "markdown"
+      },
+      "linguist": "Markdown",
+      "extensions": [
+        ".livemd",
+        ".markdown",
+        ".md",
+        ".mdown",
+        ".mdwn",
+        ".mkd",
+        ".mkdn",
+        ".mkdown",
+        ".ronn",
+        ".scd",
+        ".workbook"
+      ],
+      "filenames": [
+        "contents.lr"
+      ]
+    },
+    {
+      "id": "mathematica",
+      "name": "Mathematica",
+      "aliases": [
+        "mma",
+        "wl"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "wolfram"
+      },
+      "linguist": "Wolfram Language",
+      "extensions": [
+        ".cdf",
+        ".m",
+        ".ma",
+        ".mathematica",
+        ".mt",
+        ".nb",
+        ".nbp",
+        ".wl",
+        ".wls",
+        ".wlt"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "matlab",
+      "name": "Matlab",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "matlab"
+      },
+      "linguist": "MATLAB",
+      "extensions": [
+        ".m",
+        ".matlab"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "maxima",
+      "name": "Maxima",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "maxima"
+      },
+      "linguist": null,
+      "extensions": [
+        ".mac"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "mel",
+      "name": "MEL",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "mel"
+      },
+      "linguist": null,
+      "extensions": [
+        ".mel"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "mercury",
+      "name": "Mercury",
+      "aliases": [
+        "m",
+        "moo"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "mercury"
+      },
+      "linguist": "Mercury",
+      "extensions": [
+        ".m",
+        ".moo"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "mipsasm",
+      "name": "MIPS Assembly",
+      "aliases": [
+        "mips"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "mipsasm"
+      },
+      "linguist": null,
+      "extensions": [
+        ".s"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "mizar",
+      "name": "Mizar",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "mizar"
+      },
+      "linguist": null,
+      "extensions": [
+        ".miz"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "mojolicious",
+      "name": "Mojolicious",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "mojolicious"
+      },
+      "linguist": null,
+      "extensions": [
+        ".ep"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "monkey",
+      "name": "Monkey",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "monkey"
+      },
+      "linguist": "Monkey",
+      "extensions": [
+        ".monkey",
+        ".monkey2"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "moonscript",
+      "name": "MoonScript",
+      "aliases": [
+        "moon"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "moonscript"
+      },
+      "linguist": "MoonScript",
+      "extensions": [
+        ".moon"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "n1ql",
+      "name": "N1QL",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "n1ql"
+      },
+      "linguist": null,
+      "extensions": [
+        ".n1ql"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "nestedtext",
+      "name": "Nested Text",
+      "aliases": [
+        "nt"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "nestedtext"
+      },
+      "linguist": null,
+      "extensions": [
+        ".nt"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "nginx",
+      "name": "Nginx config",
+      "aliases": [
+        "nginxconf"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "nginx"
+      },
+      "linguist": "Nginx",
+      "extensions": [
+        ".nginx",
+        ".nginxconf",
+        ".vhost"
+      ],
+      "filenames": [
+        "nginx.conf"
+      ]
+    },
+    {
+      "id": "nim",
+      "name": "Nim",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "nim"
+      },
+      "linguist": "Nim",
+      "extensions": [
+        ".nim",
+        ".nim.cfg",
+        ".nimble",
+        ".nimrod",
+        ".nims"
+      ],
+      "filenames": [
+        "nim.cfg"
+      ]
+    },
+    {
+      "id": "nix",
+      "name": "Nix",
+      "aliases": [
+        "nixos"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "nix"
+      },
+      "linguist": "Nix",
+      "extensions": [
+        ".nix"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "node-repl",
+      "name": "Node REPL",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "node-repl"
+      },
+      "linguist": null,
+      "extensions": [
+        ".js"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "nsis",
+      "name": "NSIS",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "nsis"
+      },
+      "linguist": "NSIS",
+      "extensions": [
+        ".nsh",
+        ".nsi"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "objectivec",
+      "name": "Objective-C",
+      "aliases": [
+        "mm",
+        "obj-c",
+        "obj-c++",
+        "objc",
+        "objective-c++"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "objc"
+      },
+      "linguist": "Objective-C++",
+      "extensions": [
+        ".mm"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "ocaml",
+      "name": "OCaml",
+      "aliases": [
+        "ml"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "ocaml"
+      },
+      "linguist": "OCaml",
+      "extensions": [
+        ".eliom",
+        ".eliomi",
+        ".ml",
+        ".ml4",
+        ".mli",
+        ".mll",
+        ".mly"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "openscad",
+      "name": "OpenSCAD",
+      "aliases": [
+        "scad"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "openscad"
+      },
+      "linguist": "OpenSCAD",
+      "extensions": [
+        ".scad"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "oxygene",
+      "name": "Oxygene",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "oxygene"
+      },
+      "linguist": "Oxygene",
+      "extensions": [
+        ".oxygene"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "parser3",
+      "name": "Parser3",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "parser3"
+      },
+      "linguist": null,
+      "extensions": [
+        ".p"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "perl",
+      "name": "Perl",
+      "aliases": [
+        "pl",
+        "pm"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "perl"
+      },
+      "linguist": "Perl",
+      "extensions": [
+        ".al",
+        ".cgi",
+        ".fcgi",
+        ".perl",
+        ".ph",
+        ".pl",
+        ".plx",
+        ".pm",
+        ".psgi",
+        ".t"
+      ],
+      "filenames": [
+        ".latexmkrc",
+        "Makefile.PL",
+        "Rexfile",
+        "ack",
+        "cpanfile",
+        "latexmkrc"
+      ]
+    },
+    {
+      "id": "pf",
+      "name": "Packet Filter config",
+      "aliases": [
+        "pf.conf"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "pf"
+      },
+      "linguist": null,
+      "extensions": [
+        ".conf"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "pgsql",
+      "name": "PostgreSQL",
+      "aliases": [
+        "postgres",
+        "postgresql"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "pgsql"
+      },
+      "linguist": null,
+      "extensions": [
+        ".sql"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "php",
+      "name": "php",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "php"
+      },
+      "linguist": "PHP",
+      "extensions": [
+        ".aw",
+        ".ctp",
+        ".fcgi",
+        ".inc",
+        ".php",
+        ".php3",
+        ".php4",
+        ".php5",
+        ".phps",
+        ".phpt"
+      ],
+      "filenames": [
+        ".php",
+        ".php_cs",
+        ".php_cs.dist",
+        "Phakefile"
+      ]
+    },
+    {
+      "id": "php-template",
+      "name": "PHP template",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "php-template"
+      },
+      "linguist": null,
+      "extensions": [
+        ".php"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "plaintext",
+      "name": "Plain text",
+      "aliases": [
+        "text",
+        "txt"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "plaintext"
+      },
+      "linguist": "Text",
+      "extensions": [
+        ".fr",
+        ".nb",
+        ".ncl",
+        ".no",
+        ".txt"
+      ],
+      "filenames": [
+        "CITATION",
+        "CITATIONS",
+        "COPYING",
+        "COPYING.regex",
+        "COPYRIGHT.regex",
+        "FONTLOG",
+        "INSTALL",
+        "INSTALL.mysql",
+        "LICENSE",
+        "LICENSE.mysql",
+        "NEWS",
+        "README.me",
+        "README.mysql",
+        "README.nss",
+        "README.pc",
+        "click.me",
+        "delete.me",
+        "keep.me",
+        "package.mask",
+        "package.use.mask",
+        "package.use.stable.mask",
+        "read.me",
+        "readme.1st",
+        "test.me",
+        "use.mask",
+        "use.stable.mask"
+      ]
+    },
+    {
+      "id": "pony",
+      "name": "Pony",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "pony"
+      },
+      "linguist": "Pony",
+      "extensions": [
+        ".pony"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "powershell",
+      "name": "PowerShell",
+      "aliases": [
+        "ps",
+        "ps1",
+        "pwsh"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "powershell"
+      },
+      "linguist": "PowerShell",
+      "extensions": [
+        ".ps1",
+        ".psd1",
+        ".psm1"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "processing",
+      "name": "Processing",
+      "aliases": [
+        "pde"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "processing"
+      },
+      "linguist": "Processing",
+      "extensions": [
+        ".pde"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "profile",
+      "name": "Python profiler",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "profile"
+      },
+      "linguist": null,
+      "extensions": [
+        ".profile"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "prolog",
+      "name": "Prolog",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "prolog"
+      },
+      "linguist": "Prolog",
+      "extensions": [
+        ".pl",
+        ".plt",
+        ".pro",
+        ".prolog",
+        ".yap"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "properties",
+      "name": ".properties",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "properties"
+      },
+      "linguist": null,
+      "extensions": [
+        ".properties"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "protobuf",
+      "name": "Protocol Buffers",
+      "aliases": [
+        "proto"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "proto"
+      },
+      "linguist": "Protocol Buffer",
+      "extensions": [
+        ".proto"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "puppet",
+      "name": "Puppet",
+      "aliases": [
+        "pp"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "puppet"
+      },
+      "linguist": "Puppet",
+      "extensions": [
+        ".pp"
+      ],
+      "filenames": [
+        "Modulefile"
+      ]
+    },
+    {
+      "id": "purebasic",
+      "name": "PureBASIC",
+      "aliases": [
+        "pb",
+        "pbi"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "purebasic"
+      },
+      "linguist": "PureBasic",
+      "extensions": [
+        ".pb",
+        ".pbi"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "python",
+      "name": "Python",
+      "aliases": [
+        "gyp",
+        "ipython",
+        "py"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "python"
+      },
+      "linguist": "Python",
+      "extensions": [
+        ".cgi",
+        ".fcgi",
+        ".gyp",
+        ".gypi",
+        ".lmi",
+        ".py",
+        ".py3",
+        ".pyde",
+        ".pyi",
+        ".pyp",
+        ".pyt",
+        ".pyw",
+        ".rpy",
+        ".spec",
+        ".tac",
+        ".wsgi",
+        ".xpy"
+      ],
+      "filenames": [
+        ".gclient",
+        "DEPS",
+        "SConscript",
+        "SConstruct",
+        "wscript"
+      ]
+    },
+    {
+      "id": "python-repl",
+      "name": "python-repl",
+      "aliases": [
+        "pycon"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "python-repl"
+      },
+      "linguist": "Python console",
+      "extensions": [
+        ".py"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "q",
+      "name": "Q",
+      "aliases": [
+        "k",
+        "kdb"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "q"
+      },
+      "linguist": "q",
+      "extensions": [
+        ".q"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "qml",
+      "name": "QML",
+      "aliases": [
+        "qt"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "qml"
+      },
+      "linguist": "QML",
+      "extensions": [
+        ".qbs",
+        ".qml"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "r",
+      "name": "R",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "r"
+      },
+      "linguist": "R",
+      "extensions": [
+        ".r",
+        ".rd",
+        ".rhistory",
+        ".rsx"
+      ],
+      "filenames": [
+        ".Rapp.history",
+        ".Rhistory",
+        ".Rprofile",
+        "expr-dist"
+      ]
+    },
+    {
+      "id": "reasonml",
+      "name": "ReasonML",
+      "aliases": [
+        "re"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "reasonml"
+      },
+      "linguist": null,
+      "extensions": [
+        ".re"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "rib",
+      "name": "RenderMan RIB",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "rib"
+      },
+      "linguist": null,
+      "extensions": [
+        ".rib"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "roboconf",
+      "name": "Roboconf",
+      "aliases": [
+        "graph",
+        "instances"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "roboconf"
+      },
+      "linguist": null,
+      "extensions": [
+        ".graph"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "routeros",
+      "name": "MikroTik RouterOS script",
+      "aliases": [
+        "mikrotik"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "routeros"
+      },
+      "linguist": null,
+      "extensions": [
+        ".rsc"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "rsl",
+      "name": "RenderMan RSL",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "rsl"
+      },
+      "linguist": null,
+      "extensions": [
+        ".rsl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "ruby",
+      "name": "Ruby",
+      "aliases": [
+        "gemspec",
+        "irb",
+        "podspec",
+        "rb",
+        "thor"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "ruby"
+      },
+      "linguist": "Ruby",
+      "extensions": [
+        ".builder",
+        ".eye",
+        ".fcgi",
+        ".gemspec",
+        ".god",
+        ".jbuilder",
+        ".mspec",
+        ".pluginspec",
+        ".podspec",
+        ".prawn",
+        ".rabl",
+        ".rake",
+        ".rb",
+        ".rbi",
+        ".rbuild",
+        ".rbw",
+        ".rbx",
+        ".ru",
+        ".ruby",
+        ".spec",
+        ".thor",
+        ".watchr"
+      ],
+      "filenames": [
+        ".irbrc",
+        ".pryrc",
+        ".simplecov",
+        "Appraisals",
+        "Berksfile",
+        "Brewfile",
+        "Buildfile",
+        "Capfile",
+        "Dangerfile",
+        "Deliverfile",
+        "Fastfile",
+        "Gemfile",
+        "Guardfile",
+        "Jarfile",
+        "Mavenfile",
+        "Podfile",
+        "Puppetfile",
+        "Rakefile",
+        "Snapfile",
+        "Steepfile",
+        "Thorfile",
+        "Vagrantfile",
+        "buildfile"
+      ]
+    },
+    {
+      "id": "ruleslanguage",
+      "name": "Oracle Rules Language",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "ruleslanguage"
+      },
+      "linguist": null,
+      "extensions": [
+        ".rule"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "rust",
+      "name": "Rust",
+      "aliases": [
+        "rs"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "rust"
+      },
+      "linguist": "Rust",
+      "extensions": [
+        ".rs",
+        ".rs.in"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "sas",
+      "name": "SAS",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "sas"
+      },
+      "linguist": "SAS",
+      "extensions": [
+        ".sas"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "scala",
+      "name": "Scala",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "scala"
+      },
+      "linguist": "Scala",
+      "extensions": [
+        ".kojo",
+        ".sbt",
+        ".sc",
+        ".scala"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "scheme",
+      "name": "Scheme",
+      "aliases": [
+        "scm"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "scheme"
+      },
+      "linguist": "Scheme",
+      "extensions": [
+        ".sch",
+        ".scm",
+        ".sld",
+        ".sls",
+        ".sps",
+        ".ss"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "scilab",
+      "name": "Scilab",
+      "aliases": [
+        "sci"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "scilab"
+      },
+      "linguist": "Scilab",
+      "extensions": [
+        ".sce",
+        ".sci",
+        ".tst"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "scss",
+      "name": "SCSS",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "scss"
+      },
+      "linguist": "SCSS",
+      "extensions": [
+        ".scss"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "shell",
+      "name": "Shell Session",
+      "aliases": [
+        "console",
+        "shellsession"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "shellsession"
+      },
+      "linguist": "ShellSession",
+      "extensions": [
+        ".sh",
+        ".sh-session"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "smali",
+      "name": "Smali",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "smali"
+      },
+      "linguist": "Smali",
+      "extensions": [
+        ".smali"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "smalltalk",
+      "name": "Smalltalk",
+      "aliases": [
+        "st"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "smalltalk"
+      },
+      "linguist": "Smalltalk",
+      "extensions": [
+        ".cs",
+        ".st"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "sml",
+      "name": "SML (Standard ML)",
+      "aliases": [
+        "ml"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "sml"
+      },
+      "linguist": "Standard ML",
+      "extensions": [
+        ".fun",
+        ".ml",
+        ".sig",
+        ".sml"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "sqf",
+      "name": "SQF",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "sqf"
+      },
+      "linguist": "SQF",
+      "extensions": [
+        ".hqf",
+        ".sqf"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "sql",
+      "name": "SQL",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "sql"
+      },
+      "linguist": "SQL",
+      "extensions": [
+        ".ddl",
+        ".inc",
+        ".mysql",
+        ".prc",
+        ".sql",
+        ".tab",
+        ".udf",
+        ".viw"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "stan",
+      "name": "Stan",
+      "aliases": [
+        "stanfuncs"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "stan"
+      },
+      "linguist": "Stan",
+      "extensions": [
+        ".stan"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "stata",
+      "name": "Stata",
+      "aliases": [
+        "ado",
+        "do"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "stata"
+      },
+      "linguist": "Stata",
+      "extensions": [
+        ".ado",
+        ".do",
+        ".doh",
+        ".ihlp",
+        ".mata",
+        ".matah",
+        ".sthlp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "step21",
+      "name": "STEP Part 21",
+      "aliases": [
+        "p21",
+        "step",
+        "stp"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "step21"
+      },
+      "linguist": null,
+      "extensions": [
+        ".p21"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "stylus",
+      "name": "Stylus",
+      "aliases": [
+        "styl"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "stylus"
+      },
+      "linguist": "Stylus",
+      "extensions": [
+        ".styl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "subunit",
+      "name": "SubUnit",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "subunit"
+      },
+      "linguist": null,
+      "extensions": [
+        ".subunit"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "swift",
+      "name": "Swift",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "swift"
+      },
+      "linguist": "Swift",
+      "extensions": [
+        ".swift"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "taggerscript",
+      "name": "Tagger Script",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "taggerscript"
+      },
+      "linguist": null,
+      "extensions": [
+        ".tag"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "tap",
+      "name": "Test Anything Protocol",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "tap"
+      },
+      "linguist": null,
+      "extensions": [
+        ".tap"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "tcl",
+      "name": "Tcl",
+      "aliases": [
+        "tk"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "tcl"
+      },
+      "linguist": "Tcl",
+      "extensions": [
+        ".adp",
+        ".sdc",
+        ".tcl",
+        ".tcl.in",
+        ".tm",
+        ".xdc"
+      ],
+      "filenames": [
+        "owh",
+        "starfield"
+      ]
+    },
+    {
+      "id": "thrift",
+      "name": "Thrift",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "thrift"
+      },
+      "linguist": "Thrift",
+      "extensions": [
+        ".thrift"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "tp",
+      "name": "TP",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "tp"
+      },
+      "linguist": null,
+      "extensions": [
+        ".tp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "twig",
+      "name": "Twig",
+      "aliases": [
+        "craftcms"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "twig"
+      },
+      "linguist": "Twig",
+      "extensions": [
+        ".twig"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "typescript",
+      "name": "TypeScript",
+      "aliases": [
+        "cts",
+        "mts",
+        "ts",
+        "tsx"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "typescript"
+      },
+      "linguist": "TypeScript",
+      "extensions": [
+        ".cts",
+        ".mts",
+        ".ts"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "vala",
+      "name": "Vala",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "vala"
+      },
+      "linguist": "Vala",
+      "extensions": [
+        ".vala",
+        ".vapi"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "vbnet",
+      "name": "Visual Basic .NET",
+      "aliases": [
+        "vb"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "vbnet"
+      },
+      "linguist": "Visual Basic .NET",
+      "extensions": [
+        ".vb",
+        ".vbhtml"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "vbscript",
+      "name": "VBScript",
+      "aliases": [
+        "vbs"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "vbscript"
+      },
+      "linguist": "VBScript",
+      "extensions": [
+        ".vbs"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "vbscript-html",
+      "name": "VBScript in HTML",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "vbscript-html"
+      },
+      "linguist": null,
+      "extensions": [
+        ".asp"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "verilog",
+      "name": "Verilog",
+      "aliases": [
+        "sv",
+        "svh",
+        "v"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "verilog"
+      },
+      "linguist": "Verilog",
+      "extensions": [
+        ".v",
+        ".veo"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "vhdl",
+      "name": "VHDL",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "vhdl"
+      },
+      "linguist": "VHDL",
+      "extensions": [
+        ".vhd",
+        ".vhdl",
+        ".vhf",
+        ".vhi",
+        ".vho",
+        ".vhs",
+        ".vht",
+        ".vhw"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "vim",
+      "name": "Vim Script",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "viml"
+      },
+      "linguist": "Vim script",
+      "extensions": [
+        ".vba",
+        ".vim",
+        ".vimrc",
+        ".vmb"
+      ],
+      "filenames": [
+        ".exrc",
+        ".gvimrc",
+        ".nvimrc",
+        ".vimrc",
+        "_vimrc",
+        "gvimrc",
+        "nvimrc",
+        "vimrc"
+      ]
+    },
+    {
+      "id": "wasm",
+      "name": "WebAssembly",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "wasm"
+      },
+      "linguist": "WebAssembly",
+      "extensions": [
+        ".wast",
+        ".wat"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "wren",
+      "name": "Wren",
+      "aliases": [],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "wren"
+      },
+      "linguist": "Wren",
+      "extensions": [
+        ".wren"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "x86asm",
+      "name": "Intel x86 Assembly",
+      "aliases": [],
+      "teacher": {
+        "engine": "shiki",
+        "language": "asm"
+      },
+      "linguist": "Assembly",
+      "extensions": [
+        ".a51",
+        ".asm",
+        ".i",
+        ".inc",
+        ".nas",
+        ".nasm",
+        ".s"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "xl",
+      "name": "XL",
+      "aliases": [
+        "tao"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "xl"
+      },
+      "linguist": null,
+      "extensions": [
+        ".xl"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "xml",
+      "name": "HTML, XML",
+      "aliases": [
+        "atom",
+        "html",
+        "plist",
+        "rss",
+        "svg",
+        "wsf",
+        "xhtml",
+        "xjb",
+        "xsd",
+        "xsl"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "xml"
+      },
+      "linguist": "XML",
+      "extensions": [
+        ".adml",
+        ".admx",
+        ".ant",
+        ".axaml",
+        ".axml",
+        ".builds",
+        ".ccproj",
+        ".ccxml",
+        ".clixml",
+        ".cproject",
+        ".cscfg",
+        ".csdef",
+        ".csl",
+        ".csproj",
+        ".ct",
+        ".depproj",
+        ".dita",
+        ".ditamap",
+        ".ditaval",
+        ".dll.config",
+        ".dotsettings",
+        ".filters",
+        ".fsproj",
+        ".fxml",
+        ".glade",
+        ".gml",
+        ".gmx",
+        ".gpx",
+        ".grxml",
+        ".gst",
+        ".hzp",
+        ".icls",
+        ".iml",
+        ".ivy",
+        ".jelly",
+        ".jsproj",
+        ".kml",
+        ".launch",
+        ".mdpolicy",
+        ".meta4",
+        ".mjml",
+        ".mm",
+        ".mod",
+        ".mojo",
+        ".mxml",
+        ".natvis",
+        ".ncl",
+        ".ndproj",
+        ".nproj",
+        ".nuspec",
+        ".odd",
+        ".osm",
+        ".pkgproj",
+        ".pluginspec",
+        ".proj",
+        ".props",
+        ".ps1xml",
+        ".psc1",
+        ".pt",
+        ".pubxml",
+        ".qhelp",
+        ".rbxmx",
+        ".rdf",
+        ".res",
+        ".resx",
+        ".rs",
+        ".rss",
+        ".sch",
+        ".scxml",
+        ".sfproj",
+        ".shproj",
+        ".slnx",
+        ".srdf",
+        ".storyboard",
+        ".sublime-snippet",
+        ".sw",
+        ".targets",
+        ".tml",
+        ".ts",
+        ".tsx",
+        ".typ",
+        ".ui",
+        ".urdf",
+        ".ux",
+        ".vbproj",
+        ".vcxproj",
+        ".vsixmanifest",
+        ".vssettings",
+        ".vstemplate",
+        ".vxml",
+        ".wixproj",
+        ".workflow",
+        ".wsdl",
+        ".wsf",
+        ".wxi",
+        ".wxl",
+        ".wxs",
+        ".x3d",
+        ".xacro",
+        ".xaml",
+        ".xib",
+        ".xlf",
+        ".xliff",
+        ".xmi",
+        ".xml",
+        ".xml.dist",
+        ".xmp",
+        ".xproj",
+        ".xsd",
+        ".xspec",
+        ".xul",
+        ".zcml"
+      ],
+      "filenames": [
+        ".classpath",
+        ".cproject",
+        ".project",
+        "App.config",
+        "NuGet.config",
+        "Settings.StyleCop",
+        "Web.Debug.config",
+        "Web.Release.config",
+        "Web.config",
+        "packages.config"
+      ]
+    },
+    {
+      "id": "xquery",
+      "name": "XQuery",
+      "aliases": [
+        "xpath",
+        "xq",
+        "xqm"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "xquery"
+      },
+      "linguist": "XQuery",
+      "extensions": [
+        ".xq",
+        ".xql",
+        ".xqm",
+        ".xquery",
+        ".xqy"
+      ],
+      "filenames": []
+    },
+    {
+      "id": "yaml",
+      "name": "YAML",
+      "aliases": [
+        "yml"
+      ],
+      "teacher": {
+        "engine": "shiki",
+        "language": "yaml"
+      },
+      "linguist": "YAML",
+      "extensions": [
+        ".mir",
+        ".reek",
+        ".rviz",
+        ".sublime-syntax",
+        ".syntax",
+        ".yaml",
+        ".yaml-tmlanguage",
+        ".yaml.sed",
+        ".yml",
+        ".yml.mysql"
+      ],
+      "filenames": [
+        ".clang-format",
+        ".clang-tidy",
+        ".clangd",
+        ".eslintrc",
+        ".gemrc",
+        ".releaserc",
+        "CITATION.cff",
+        "glide.lock",
+        "pixi.lock",
+        "yarn.lock"
+      ]
+    },
+    {
+      "id": "zephir",
+      "name": "Zephir",
+      "aliases": [
+        "zep"
+      ],
+      "teacher": {
+        "engine": "highlight.js",
+        "language": "zephir"
+      },
+      "linguist": "Zephir",
+      "extensions": [
+        ".zep"
+      ],
+      "filenames": []
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+node_modules/
+__pycache__/
+*.pyc
+corpus/
+checkpoints_*/
+*.log
+prepare_upload.pid
+prepare_upload_state.json

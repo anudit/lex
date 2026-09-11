@@ -1,0 +1,7 @@
+# Shared Python environment for the compact and large training pipelines.
+# Install with: uv pip install --python <venv-python> -r requirements.txt
+numpy==2.5.3
+requests==2.34.2
+torch==2.14.0
+tqdm==4.70.0
+huggingface-hub==0.34.4

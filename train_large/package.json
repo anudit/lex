@@ -1,0 +1,13 @@
+{
+  "name": "lex-train-large-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync-languages": "node sync_languages.mjs"
+  },
+  "dependencies": {
+    "highlight.js": "11.12.0",
+    "shiki": "4.4.3",
+    "yaml": "2.8.1"
+  }
+}

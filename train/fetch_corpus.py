@@ -316,7 +316,9 @@ def main() -> None:
                     help='token budget the corpus must support, split by language weight')
     ap.add_argument('--headroom', type=float, default=2.0,
                     help='raw bytes to fetch per token budget, above the ~2.5 B/token floor')
-    ap.add_argument('--languages', default='', help='comma-separated subset (default: all 29)')
+    ap.add_argument('--languages', default='',
+                    help=f'comma-separated subset (default: all configured from '
+                         f'{len(TARGET_LANGUAGES)} targets)')
     ap.add_argument('--workers', type=int, default=6)
     ap.add_argument('--holdout', action='store_true',
                     help='fetch from repos_holdout.py instead of repos.py')

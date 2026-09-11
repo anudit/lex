@@ -105,6 +105,7 @@ class LexerDataset(Dataset):
         self.offsets = offsets
         self.langs = langs
         self.seq_len = seq_len
+        self.teacher_logits: np.ndarray | None = None
 
     @classmethod
     def from_samples(cls, samples: list[dict], seq_len: int) -> 'LexerDataset':
@@ -140,6 +141,11 @@ class LexerDataset(Dataset):
         valid[:n] = True
         item['valid'] = valid
         item['lang'] = torch.tensor(int(self.langs[idx]), dtype=torch.long)
+        item['index'] = torch.tensor(idx, dtype=torch.long)
+        if self.teacher_logits is not None:
+            # Copy one small row out of the read-only mmap so DataLoader can pin it.
+            item['teacher_logits'] = torch.from_numpy(
+                np.array(self.teacher_logits[idx], copy=True))
         return item
 
 

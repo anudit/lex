@@ -25,6 +25,7 @@ in the model so it costs nothing at inference and never reaches the exported fil
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import math
@@ -107,9 +108,10 @@ def _boundary_masks(labels: torch.Tensor, preds: torch.Tensor
     return adjacent > 0, gold, predicted
 
 
-def _boundary_counts(labels: torch.Tensor, preds: torch.Tensor) -> tuple[int, int, int]:
+def _boundary_counts(labels: torch.Tensor, preds: torch.Tensor
+                     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     _, gold, predicted = _boundary_masks(labels, preds)
-    return (int((gold & predicted).sum()), int(predicted.sum()), int(gold.sum()))
+    return ((gold & predicted).sum(), predicted.sum(), gold.sum())
 
 
 def construct_window_multipliers(dataset: dp.LexerDataset, boost: float) -> np.ndarray:
@@ -220,59 +222,76 @@ def structural_targets(feats: dict[str, torch.Tensor], labels: torch.Tensor) -> 
 NUM_STRUCT_BITS = 8
 
 
-@torch.no_grad()
+def autocast_context(device: torch.device, dtype: torch.dtype | None):
+    if device.type != 'cuda' or dtype is None:
+        return contextlib.nullcontext()
+    return torch.autocast(device_type='cuda', dtype=dtype)
+
+
+@torch.inference_mode()
 def evaluate(model: NeuralLexer, loader: DataLoader, device: torch.device,
-             criterion: nn.Module, quantized: bool = True) -> dict:
+             criterion: nn.Module, quantized: bool = True,
+             amp_dtype: torch.dtype | None = None) -> dict:
     model.eval()
     model.set_quant(quantized)
     n_lang = len(TARGET_LANGUAGES)
-    hit = torch.zeros(n_lang)
-    tot = torch.zeros(n_lang)
-    cls_hit = torch.zeros(NUM_CLASSES)
-    cls_tot = torch.zeros(NUM_CLASSES)
-    boundary_tp = boundary_pred = boundary_gold = 0
-    loss_sum = 0.0
+    hit = torch.zeros(n_lang, dtype=torch.int64, device=device)
+    tot = torch.zeros(n_lang, dtype=torch.int64, device=device)
+    cls_hit = torch.zeros(NUM_CLASSES, dtype=torch.int64, device=device)
+    cls_tot = torch.zeros(NUM_CLASSES, dtype=torch.int64, device=device)
+    boundary_tp = torch.zeros((), dtype=torch.int64, device=device)
+    boundary_pred = torch.zeros((), dtype=torch.int64, device=device)
+    boundary_gold = torch.zeros((), dtype=torch.int64, device=device)
+    loss_sum = torch.zeros((), dtype=torch.float32, device=device)
     batches = 0
 
     for batch in loader:
         feats, labels, valid, lang = to_device(batch, device)
-        logits = model(feats, valid)
-        if isinstance(criterion, BoundaryWeightedCrossEntropy):
-            loss_sum += criterion(logits, labels).item()
-        else:
-            loss_sum += criterion(
-                logits.reshape(-1, NUM_CLASSES), labels.reshape(-1)).item()
+        with autocast_context(device, amp_dtype):
+            logits = model(feats, valid)
+            if isinstance(criterion, BoundaryWeightedCrossEntropy):
+                batch_loss = criterion(logits, labels)
+            else:
+                batch_loss = criterion(
+                    logits.reshape(-1, NUM_CLASSES), labels.reshape(-1))
+        loss_sum += batch_loss.float()
         batches += 1
         preds = logits.argmax(-1)
         mask = labels != MASK
         correct = (preds == labels) & mask
         # Per-language tallies: one row of the batch is one language.
-        lang_cpu = lang.cpu()
-        hit.index_add_(0, lang_cpu, correct.sum(1).float().cpu())
-        tot.index_add_(0, lang_cpu, mask.sum(1).float().cpu())
-        vl = labels[mask].cpu()
-        vp = preds[mask].cpu()
+        hit.index_add_(0, lang, correct.sum(1))
+        tot.index_add_(0, lang, mask.sum(1))
+        vl = labels[mask]
+        vp = preds[mask]
         tp, npred, ngold = _boundary_counts(labels, preds)
         boundary_tp += tp
         boundary_pred += npred
         boundary_gold += ngold
-        cls_tot.index_add_(0, vl, torch.ones_like(vl, dtype=torch.float))
-        cls_hit.index_add_(0, vl, (vp == vl).float())
+        cls_tot.index_add_(0, vl, torch.ones_like(vl))
+        cls_hit.index_add_(0, vl, (vp == vl).to(torch.int64))
 
-    per_lang = {TARGET_LANGUAGES[i]: (hit[i] / tot[i]).item()
-                for i in range(n_lang) if tot[i] > 0}
+    # One synchronization for the complete evaluation instead of several per batch.
+    hit_cpu = hit.cpu()
+    tot_cpu = tot.cpu()
+    cls_hit_cpu = cls_hit.cpu()
+    cls_tot_cpu = cls_tot.cpu()
+    per_lang = {TARGET_LANGUAGES[i]: (hit_cpu[i] / tot_cpu[i]).item()
+                for i in range(n_lang) if tot_cpu[i] > 0}
     w = lang_weights()
     # Unsupported languages score zero, exactly as the reference benchmark does.
     weighted = sum(w[l] * per_lang.get(l, 0.0) for l in TARGET_LANGUAGES)
-    micro = (hit.sum() / tot.sum().clamp_min(1)).item()
+    micro = (hit_cpu.sum() / tot_cpu.sum().clamp_min(1)).item()
+    macro = sum(per_lang.get(l, 0.0) for l in TARGET_LANGUAGES) / n_lang
     return {
-        'loss': loss_sum / max(1, batches),
+        'loss': (loss_sum / max(1, batches)).item(),
         'weighted': weighted,
         'micro': micro,
-        'boundary_f1': (2 * boundary_tp / max(1, boundary_pred + boundary_gold)),
+        'macro': macro,
+        'boundary_f1': (2 * boundary_tp / (boundary_pred + boundary_gold).clamp_min(1)).item(),
         'per_lang': per_lang,
-        'per_class': {CLASS_NAMES[i]: (cls_hit[i] / cls_tot[i]).item()
-                      for i in range(NUM_CLASSES) if cls_tot[i] > 0},
+        'per_class': {CLASS_NAMES[i]: (cls_hit_cpu[i] / cls_tot_cpu[i]).item()
+                      for i in range(NUM_CLASSES) if cls_tot_cpu[i] > 0},
     }
 
 
@@ -289,6 +308,17 @@ def main() -> None:
                     help='full-precision epochs before quantization-aware training')
     ap.add_argument('--out-dir', default='./checkpoints')
     ap.add_argument('--workers', type=int, default=4)
+    ap.add_argument('--precision', choices=('fp32', 'bf16', 'fp16'), default='fp32',
+                    help='CUDA autocast precision; non-CUDA devices always use fp32')
+    ap.add_argument('--compile-mode',
+                    choices=('none', 'default', 'reduce-overhead', 'max-autotune',
+                             'max-autotune-no-cudagraphs'), default='none',
+                    help='torch.compile mode used on CUDA')
+    ap.add_argument('--matmul-precision', choices=('highest', 'high', 'medium'),
+                    default='highest', help='internal precision for float32 matmuls')
+    ap.add_argument('--pin-memory', action=argparse.BooleanOptionalAction, default=False)
+    ap.add_argument('--prefetch-factor', type=int, default=2)
+    ap.add_argument('--fused-optimizer', action=argparse.BooleanOptionalAction, default=False)
     ap.add_argument('--max-steps', type=int, default=0, help='0 = full epochs')
     ap.add_argument('--film-rank', type=int, default=32,
                     help='rank of the FiLM projection; 0 disables conditioning')
@@ -300,7 +330,8 @@ def main() -> None:
     ap.add_argument('--tail-floor', type=float, default=0.001,
                     help='minimum pre-tempering probability for non-benchmark languages')
     ap.add_argument('--include-excluded-languages', action='store_true',
-                    help='train all 57 languages instead of the promoted 52-language set')
+                    help=f'train all {len(TARGET_LANGUAGES)} languages instead of '
+                         f'the default {len(TARGET_LANGUAGES) - len(TRAIN_EXCLUDED_LANGUAGES)}')
     ap.add_argument('--construct-boost', type=float, default=1.0,
                     help='sampling boost for windows with complete string/comment runs')
     ap.add_argument('--boundary-boost', type=float, default=1.0,
@@ -309,6 +340,9 @@ def main() -> None:
                     help='final fraction of epochs sampled at natural benchmark weights')
     ap.add_argument('--teacher-checkpoint', default='',
                     help='optional wider teacher checkpoint for logit distillation')
+    ap.add_argument('--teacher-logits', default='',
+                    help='optional [train_windows, seq_len, classes] .npy cache; '
+                         'takes precedence over live teacher inference')
     ap.add_argument('--distill-weight', type=float, default=0.2)
     ap.add_argument('--distill-temperature', type=float, default=2.0)
     ap.add_argument('--full-precision', action='store_true',
@@ -351,6 +385,13 @@ def main() -> None:
     torch.manual_seed(args.seed)
     device = pick_device()
     print(f'>> device: {device}')
+    torch.set_float32_matmul_precision(args.matmul_precision)
+    amp_dtype = ({'bf16': torch.bfloat16, 'fp16': torch.float16}.get(args.precision)
+                 if device.type == 'cuda' else None)
+    if args.precision != 'fp32' and amp_dtype is None:
+        print(f'>> precision: {args.precision} requested but CUDA is unavailable; using fp32')
+    else:
+        print(f'>> precision: {args.precision}, matmul {args.matmul_precision}')
 
     ds, meta = dp.build(cache=args.dataset, total_tokens=args.total_tokens)
     print(f">> corpus: {meta['total_tokens']:,} tokens, {meta['files']:,} files, "
@@ -390,12 +431,17 @@ def main() -> None:
     if excluded:
         print(f">> training exclusions (still evaluated): {', '.join(excluded)}")
 
+    loader_kwargs = {
+        'num_workers': args.workers,
+        'persistent_workers': args.workers > 0,
+        'pin_memory': args.pin_memory and device.type == 'cuda',
+    }
+    if args.workers > 0:
+        loader_kwargs['prefetch_factor'] = args.prefetch_factor
     train_loader = DataLoader(ds['train'], batch_size=args.batch_size,
-                              sampler=train_sampler,
-                              num_workers=args.workers, drop_last=True,
-                              persistent_workers=args.workers > 0)
+                              sampler=train_sampler, drop_last=True, **loader_kwargs)
     val_loader = DataLoader(ds['val'], batch_size=args.batch_size,
-                            num_workers=args.workers)
+                            **loader_kwargs)
 
     resume_ck = None
     if args.resume:
@@ -449,7 +495,28 @@ def main() -> None:
     criterion = BoundaryWeightedCrossEntropy(cw, boundary_boost=args.boundary_boost)
 
     teacher = None
-    if args.teacher_checkpoint:
+    if args.teacher_logits:
+        teacher_logits_path = Path(args.teacher_logits)
+        cached_logits = np.load(teacher_logits_path, mmap_mode='r')
+        expected = (len(ds['train']), ds['train'].seq_len, NUM_CLASSES)
+        if cached_logits.shape != expected:
+            raise ValueError(
+                f'teacher logit cache shape {cached_logits.shape} does not match {expected}')
+        cache_meta_path = teacher_logits_path.with_suffix('.meta.json')
+        if cache_meta_path.exists():
+            cache_meta = json.loads(cache_meta_path.read_text())
+            expected_dataset_hash = sha256_file(Path(args.dataset) / 'meta.json')
+            if cache_meta.get('dataset_meta_sha256') != expected_dataset_hash:
+                raise ValueError(
+                    'teacher logit cache was generated from a different dataset; '
+                    'rerun cache_teacher_logits.py')
+        else:
+            print(f'>> warning: {cache_meta_path} is missing; cache provenance '
+                  'cannot be verified')
+        ds['train'].teacher_logits = cached_logits
+        print(f'>> distilling from cached logits {args.teacher_logits} '
+              f'(weight {args.distill_weight}, temperature {args.distill_temperature})')
+    elif args.teacher_checkpoint:
         teacher_ck = torch.load(args.teacher_checkpoint, map_location=device, weights_only=False)
         teacher = NeuralLexer(LexerConfig(**teacher_ck['config'])).to(device)
         teacher.load_state_dict(teacher_ck['model_state_dict'])
@@ -460,6 +527,14 @@ def main() -> None:
         print(f'>> distilling from {args.teacher_checkpoint} '
               f'(weight {args.distill_weight}, temperature {args.distill_temperature})')
 
+    if args.compile_mode != 'none' and device.type == 'cuda':
+        model.compile(mode=args.compile_mode)
+        if teacher is not None:
+            teacher.compile(mode=args.compile_mode)
+        print(f'>> torch.compile: {args.compile_mode}')
+    elif args.compile_mode != 'none':
+        print(f'>> torch.compile: disabled because {device.type} is not CUDA')
+
     # Training-only auxiliary heads. Their parameters are optimized alongside the
     # model but are never part of it.
     lang_head = nn.Linear(model.cfg.dim * 2, len(TARGET_LANGUAGES)).to(device)
@@ -469,9 +544,16 @@ def main() -> None:
 
     steps_per_epoch = args.max_steps or len(train_loader)
     total_steps = steps_per_epoch * args.epochs
+    optimizer_args = {'lr': args.lr, 'weight_decay': 0.01}
+    if args.fused_optimizer and device.type == 'cuda':
+        optimizer_args['fused'] = True
+    elif args.fused_optimizer:
+        print(f'>> fused AdamW: disabled because {device.type} is not CUDA')
     opt = torch.optim.AdamW(
         list(model.parameters()) + list(lang_head.parameters()) + list(struct_head.parameters()),
-        lr=args.lr, weight_decay=0.01)
+        **optimizer_args)
+    scaler = (torch.amp.GradScaler('cuda')
+              if device.type == 'cuda' and args.precision == 'fp16' else None)
     if resume_ck is not None:
         # No ramp-up: the loaded model is already past warmup, and a fresh
         # OneCycleLR climbing back to max_lr would shove it away from wherever
@@ -497,72 +579,88 @@ def main() -> None:
         model.train()
         model.set_quant(quant)
         t0 = time.time()
-        run_loss = 0.0
-        run_aux = 0.0
-        run_struct = 0.0
-        aux_hit = aux_tot = 0
-        struct_hit = struct_tot = 0
-        hit = tot = 0
+        run_loss = torch.zeros((), dtype=torch.float32, device=device)
+        run_aux = torch.zeros((), dtype=torch.float32, device=device)
+        run_struct = torch.zeros((), dtype=torch.float32, device=device)
+        aux_hit = torch.zeros((), dtype=torch.int64, device=device)
+        aux_tot = torch.zeros((), dtype=torch.int64, device=device)
+        struct_hit = torch.zeros((), dtype=torch.int64, device=device)
+        struct_tot = torch.zeros((), dtype=torch.int64, device=device)
+        hit = torch.zeros((), dtype=torch.int64, device=device)
+        tot = torch.zeros((), dtype=torch.int64, device=device)
         for step, batch in enumerate(train_loader):
             if args.max_steps and step >= args.max_steps:
                 break
             feats, labels, valid, lang = to_device(batch, device)
             want_sig = args.lang_loss > 0
             want_struct = args.struct_loss > 0
-            out = model(feats, valid, return_signature=want_sig or want_struct)
-            logits, sig, token_repr = out if (want_sig or want_struct) else (out, None, None)
-            loss = criterion(logits, labels)
-            if teacher is not None and args.distill_weight > 0:
-                with torch.no_grad():
-                    teacher_logits = teacher(feats, valid)
-                temp = args.distill_temperature
-                soft = F.kl_div(
-                    F.log_softmax(logits / temp, dim=-1),
-                    F.softmax(teacher_logits / temp, dim=-1),
-                    reduction='none').sum(-1)
-                mask = labels != MASK
-                distill = soft[mask].mean() * (temp * temp)
-                loss = loss + args.distill_weight * distill
-            if want_sig:
-                aux = lang_criterion(lang_head(sig), lang)
-                loss = loss + args.lang_loss * aux
-                run_aux += aux.item()
-                aux_hit += (lang_head(sig).argmax(-1) == lang).sum().item()
-                aux_tot += lang.numel()
-            if want_struct:
-                struct_target = structural_targets(feats, labels)
-                struct_logits = struct_head(token_repr)
-                m3 = valid.unsqueeze(-1).expand_as(struct_target)
-                struct = struct_criterion(struct_logits[m3], struct_target[m3])
-                loss = loss + args.struct_loss * struct
-                run_struct += struct.item()
-                with torch.no_grad():
-                    struct_hit += (((struct_logits > 0) == (struct_target > 0.5)) & m3).sum().item()
-                    struct_tot += m3.sum().item()
             opt.zero_grad(set_to_none=True)
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
+            with autocast_context(device, amp_dtype):
+                out = model(feats, valid, return_signature=want_sig or want_struct)
+                logits, sig, token_repr = out if (want_sig or want_struct) else (out, None, None)
+                loss = criterion(logits, labels)
+                cached_teacher = batch.get('teacher_logits')
+                if (teacher is not None or cached_teacher is not None) and args.distill_weight > 0:
+                    if cached_teacher is not None:
+                        teacher_logits = cached_teacher.to(device, non_blocking=True)
+                    else:
+                        with torch.no_grad():
+                            teacher_logits = teacher(feats, valid)
+                    temp = args.distill_temperature
+                    soft = F.kl_div(
+                        F.log_softmax(logits / temp, dim=-1),
+                        F.softmax(teacher_logits / temp, dim=-1),
+                        reduction='none').sum(-1)
+                    mask = labels != MASK
+                    distill = soft[mask].mean() * (temp * temp)
+                    loss = loss + args.distill_weight * distill
+                if want_sig:
+                    lang_logits = lang_head(sig)
+                    aux = lang_criterion(lang_logits, lang)
+                    loss = loss + args.lang_loss * aux
+                    run_aux += aux.detach().float()
+                    aux_hit += (lang_logits.argmax(-1) == lang).sum()
+                    aux_tot += lang.numel()
+                if want_struct:
+                    struct_target = structural_targets(feats, labels)
+                    struct_logits = struct_head(token_repr)
+                    m3 = valid.unsqueeze(-1).expand_as(struct_target)
+                    struct = struct_criterion(struct_logits[m3], struct_target[m3])
+                    loss = loss + args.struct_loss * struct
+                    run_struct += struct.detach().float()
+                    struct_hit += (((struct_logits > 0) == (struct_target > 0.5)) & m3).sum()
+                    struct_tot += m3.sum()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.unscale_(opt)
+                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(opt)
+                scaler.update()
+            else:
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                opt.step()
             sched.step()
-            run_loss += loss.item()
+            run_loss += loss.detach().float()
             with torch.no_grad():
                 m = labels != MASK
-                hit += ((logits.argmax(-1) == labels) & m).sum().item()
-                tot += m.sum().item()
+                hit += ((logits.argmax(-1) == labels) & m).sum()
+                tot += m.sum()
             if step % 200 == 0:
                 print(f'   epoch {epoch} step {step}/{steps_per_epoch} '
-                      f'loss {run_loss / (step + 1):.4f} acc {100 * hit / max(1, tot):.1f}%',
+                      f'loss {(run_loss / (step + 1)).item():.4f} '
+                      f'acc {(100 * hit / tot.clamp_min(1)).item():.1f}%',
                       flush=True)
 
         val = evaluate(model, val_loader, device, criterion,
-                       quantized=not args.full_precision)
+                       quantized=not args.full_precision, amp_dtype=amp_dtype)
         mode = 'FP teacher' if args.full_precision else ('1-bit QAT' if quant else 'FP warmup')
         # The auxiliary language accuracy is reported because the FiLM
         # conditioning downstream is only as good as the signature it reads.
-        aux_str = (f' lang {100 * aux_hit / max(1, aux_tot):.1f}%'
-                   if aux_tot else '')
-        struct_str = (f' struct {100 * struct_hit / max(1, struct_tot):.1f}%'
-                      if struct_tot else '')
+        aux_str = (f' lang {(100 * aux_hit / aux_tot.clamp_min(1)).item():.1f}%'
+                   if aux_tot.item() else '')
+        struct_str = (f' struct {(100 * struct_hit / struct_tot.clamp_min(1)).item():.1f}%'
+                      if struct_tot.item() else '')
 
         bench_result = None
         bench_str = ''
@@ -573,10 +671,11 @@ def main() -> None:
                          f'boundary {100 * bench_result["boundary_f1"]:.2f}%')
 
         print(f'Epoch {epoch:2d}/{args.epochs} [{mode}] {time.time() - t0:.0f}s '
-              f'train_loss {run_loss / steps_per_epoch:.4f} '
-              f'train_acc {100 * hit / max(1, tot):.1f}%{aux_str}{struct_str} | '
+              f'train_loss {(run_loss / steps_per_epoch).item():.4f} '
+              f'train_acc {(100 * hit / tot.clamp_min(1)).item():.1f}%{aux_str}{struct_str} | '
                        f'val_loss {val["loss"]:.4f} '
-                      f'WEIGHTED {100 * val["weighted"]:.2f}% micro {100 * val["micro"]:.2f}% '
+                      f'WEIGHTED {100 * val["weighted"]:.2f}% macro {100 * val["macro"]:.2f}% '
+                      f'micro {100 * val["micro"]:.2f}% '
                       f'boundary {100 * val["boundary_f1"]:.2f}%{bench_str}',
               flush=True)
         history.append({'epoch': epoch, 'quant': quant,
