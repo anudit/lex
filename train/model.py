@@ -365,15 +365,24 @@ class NeuralLexer(nn.Module):
             x = layer(x, valid, film)
         ctx = self.global_ctx(x, valid)
         if self.highway_scale is not None:
-            h = self.head_norm(x + self.highway_scale * x_orig)
+            token_repr = self.head_norm(x + self.highway_scale * x_orig)
         else:
-            h = self.head_norm(x)
-        h = F.gelu(self.head_hidden(torch.cat([h, ctx], dim=-1)))
+            token_repr = self.head_norm(x)
+        h = F.gelu(self.head_hidden(torch.cat([token_repr, ctx], dim=-1)))
         logits = self.head_out(h)
-        # The auxiliary language head in the trainer needs the signature; handing
-        # it back avoids a second forward pass over the embedding table, which is
-        # the largest tensor in the model.
-        return (logits, sig) if return_signature else logits
+        # The auxiliary language head reads `sig` (the pooled document signature);
+        # the auxiliary structural-state head in the trainer reads `token_repr`
+        # (the per-token hidden state right before the classifier merges in the
+        # global context) -- handing both back avoids a second forward pass over
+        # the embedding table, which is the largest tensor in the model.
+        #
+        # Tried concatenating the structural head's own prediction into the
+        # classifier input (mirroring gpu-lexer's tree model) in a full run: it
+        # made lex's own val score go up (86.0%) while real-bench went *down*
+        # (81.4% vs 83.0% without it) -- overfitting to lex's label quirks
+        # rather than generalizing. Reverted; kept as a training-only auxiliary
+        # loss instead, which measurably helped.
+        return (logits, sig, token_repr) if return_signature else logits
 
     def doc_signature(self, feats: dict[str, torch.Tensor],
                       valid: torch.Tensor) -> torch.Tensor:

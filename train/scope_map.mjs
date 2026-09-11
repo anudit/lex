@@ -31,6 +31,10 @@ const RULES = [
   ['string', CLASS.string],
   ['meta.embedded.line.regexp', CLASS.string],
   ['text.html.basic', CLASS.plain],
+  // Markdown inline code and link text/title read as string, matching every
+  // other "quoted-looking content" rule above.
+  ['markup.inline.raw', CLASS.string],
+  ['markup.underline.link', CLASS.string],
 
   // --- numbers --------------------------------------------------------------
   ['constant.numeric', CLASS.number],
@@ -45,10 +49,21 @@ const RULES = [
 
   // --- operators (must precede the generic keyword rule) ---------------------
   ['keyword.operator', CLASS.operator],
+  // Markdown's heading/bold/italic markers carry a punctuation.definition.*
+  // scope as the *innermost* scope of the whole marked-up span (Shiki does not
+  // split the marker from its content into separate tokens the way it does for
+  // strings/comments), so without these exceptions the generic `punctuation`
+  // rule below would claim the entire "# Heading" or "**bold**" span, not just
+  // the `#`/`**` marks.
+  ['punctuation.definition.heading', CLASS.keyword],
+  ['punctuation.definition.bold', CLASS.plain],
+  ['punctuation.definition.italic', CLASS.plain],
+  ['punctuation.definition.raw', CLASS.string],
   ['punctuation', CLASS.operator],
 
   // --- keywords -------------------------------------------------------------
   ['keyword', CLASS.keyword],
+  ['markup.heading', CLASS.keyword],
   ['storage.modifier', CLASS.keyword],
   ['storage.type.function', CLASS.keyword],
   ['storage.type.class', CLASS.keyword],

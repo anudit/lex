@@ -48,7 +48,8 @@ def main() -> None:
         if not d.is_dir():
             continue
         pool = [p for p in sorted(d.iterdir())
-                if p.is_file() and (args.all_files or split_of(str(p)) == 'test')]
+                if p.is_file() and (args.all_files
+                    or split_of(p.read_text(encoding='utf-8', errors='ignore')) == 'test')]
         rng.shuffle(pool)
         # Two passes. The first takes files that fit the size band as-is; the
         # second truncates larger ones to top up. Without the second pass a

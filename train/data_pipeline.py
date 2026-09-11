@@ -76,10 +76,14 @@ def align(tokens, char_cls: np.ndarray) -> np.ndarray:
     return labels
 
 
-def split_of(path: str, val_pct: int = 5, test_pct: int = 5) -> str:
-    """Deterministic per-file split. Hashing the path keeps the assignment stable
-    across corpus refreshes, so a file never migrates from train into test."""
-    h = int(hashlib.sha1(os.path.basename(path).encode()).hexdigest()[:8], 16) % 100
+def split_of(text: str, val_pct: int = 5, test_pct: int = 5) -> str:
+    """Deterministic per-content split. Hashing the file *content* -- not the
+    path -- guarantees a byte-identical file always lands in the same split no
+    matter how many repo paths it was fetched under. Hashing the path basename
+    let ~0.6% of files (vendored copies, generated boilerplate, license
+    headers fetched under different repo paths) leak byte-identical content
+    across train/val/test, silently inflating val/test accuracy."""
+    h = int(hashlib.sha1(text.encode('utf-8', errors='ignore')).hexdigest()[:8], 16) % 100
     if h < test_pct:
         return 'test'
     if h < test_pct + val_pct:
@@ -230,7 +234,7 @@ def build(
                     continue
 
                 arrays = tokenizer.tokens_to_arrays(toks)
-                split = split_of(path)
+                split = split_of(code)
                 chunks = _chunk(arrays, labels, lang_id, seq_len, min_len)
 
                 kept = []

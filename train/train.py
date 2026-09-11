@@ -38,6 +38,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 
 import data_pipeline as dp
 import export
+from eval_real_bench import RealBenchEval, DEFAULT_GPU_LEXER_ROOT as _REAL_BENCH_DEFAULT_ROOT
 from labels import CLASS_NAMES, MASK, NUM_CLASSES
 from languages import TARGET_LANGUAGES, weights as lang_weights
 from model import LexerConfig, NeuralLexer
@@ -63,6 +64,52 @@ def to_device(batch: dict, device: torch.device) -> tuple[dict, torch.Tensor, to
              for k, v in batch.items() if k in dp.FEATURE_KEYS}
     return (feats, batch['label'].to(device), batch['valid'].to(device),
             batch['lang'].to(device))
+
+
+# Bracket characters as they appear in `first_char`/`last_char`: those fields are
+# the raw ASCII code for any character below 128 (see tokenizer.char_bucket), so
+# a single-character symbol token's identity is already sitting in the feature
+# tensors gpu-lexer's tree model gets this signal -- comment-state, string-state,
+# bracket depth -- as an explicit multi-task target predicted from the hidden
+# state and fed back into the classifier. Reproducing that here costs no new
+# labels or tokenizer changes: comment/string continuity comes from the existing
+# gold labels shifted by one token, and bracket depth is a deterministic
+# cumulative count over symbol tokens already in the batch.
+_OPEN = {40: 0, 123: 1, 91: 2}    # ( { [
+_CLOSE = {41: 0, 125: 1, 93: 2}  # ) } ]
+
+
+def structural_targets(feats: dict[str, torch.Tensor], labels: torch.Tensor) -> torch.Tensor:
+    """[B, T, 8] float target: prev-token in-comment, prev-token in-string, then
+    depth>=1 and depth>=2 buckets for parens/curlies/squares."""
+    kind = feats['kind']
+    first_char = feats['first_char']
+    is_symbol = kind == 3
+    B, T = kind.shape
+    device = kind.device
+
+    delta = torch.zeros(3, B, T, device=device)
+    for char, bracket in _OPEN.items():
+        delta[bracket] += ((first_char == char) & is_symbol).float()
+    for char, bracket in _CLOSE.items():
+        delta[bracket] -= ((first_char == char) & is_symbol).float()
+    depth = delta.cumsum(dim=-1).clamp(min=0)  # [3, B, T]
+
+    from labels import COMMENT, STRING
+    prev_comment = torch.zeros(B, T, device=device)
+    prev_string = torch.zeros(B, T, device=device)
+    prev_comment[:, 1:] = (labels[:, :-1] == COMMENT).float()
+    prev_string[:, 1:] = (labels[:, :-1] == STRING).float()
+
+    return torch.stack([
+        prev_comment, prev_string,
+        (depth[0] >= 1).float(), (depth[0] >= 2).float(),
+        (depth[1] >= 1).float(), (depth[1] >= 2).float(),
+        (depth[2] >= 1).float(), (depth[2] >= 2).float(),
+    ], dim=-1)
+
+
+NUM_STRUCT_BITS = 8
 
 
 @torch.no_grad()
@@ -129,6 +176,22 @@ def main() -> None:
                     help='rank of the FiLM projection; 0 disables conditioning')
     ap.add_argument('--lang-loss', type=float, default=0.2,
                     help='weight of the auxiliary language loss; 0 disables it')
+    ap.add_argument('--struct-loss', type=float, default=0.2,
+                    help='weight of the auxiliary structural-state loss '
+                         '(comment/string continuity, bracket depth); 0 disables it')
+    ap.add_argument('--mine-weak-languages', action='store_true',
+                    help='after each epoch, boost sampling weight for languages the '
+                         'model is currently weakest on (up to 3x), on top of the '
+                         'static equal-exposure weighting -- the equal-exposure '
+                         'scheme gives every language the same shot per epoch, but '
+                         'says nothing about which ones still need more of it')
+    ap.add_argument('--real-bench-root', default=str(_REAL_BENCH_DEFAULT_ROOT),
+                    help='path to a gpu-lexer checkout with its verification shard '
+                         'built; when it exists, checkpoint selection uses accuracy '
+                         'on that real corpus instead of the internal val split, '
+                         'since that split can drift from what the public benchmark '
+                         'reports. Pass an empty string to fall back to val-only '
+                         'selection.')
     ap.add_argument('--dim', type=int, default=64,
                     help='per-layer recurrent hidden width')
     ap.add_argument('--embed-dim', type=int, default=32,
@@ -163,9 +226,9 @@ def main() -> None:
     # Weight each window by the inverse size of its language's window count so every
     # language gets roughly equal expected exposure per epoch.
     train_lang_counts = np.bincount(ds['train'].langs, minlength=len(TARGET_LANGUAGES))
-    per_window_weight = 1.0 / np.maximum(train_lang_counts[ds['train'].langs], 1)
+    base_per_window_weight = 1.0 / np.maximum(train_lang_counts[ds['train'].langs], 1)
     train_sampler = WeightedRandomSampler(
-        torch.from_numpy(per_window_weight).double(),
+        torch.from_numpy(base_per_window_weight).double(),
         num_samples=len(ds['train']), replacement=True)
 
     train_loader = DataLoader(ds['train'], batch_size=args.batch_size,
@@ -192,15 +255,26 @@ def main() -> None:
     cw = class_weights(meta['label_counts'], device)
     criterion = nn.CrossEntropyLoss(ignore_index=MASK, weight=cw, label_smoothing=0.03)
 
-    # Training-only auxiliary head. Its parameters are optimized alongside the
+    # Training-only auxiliary heads. Their parameters are optimized alongside the
     # model but are never part of it.
     lang_head = nn.Linear(model.cfg.dim * 2, len(TARGET_LANGUAGES)).to(device)
     lang_criterion = nn.CrossEntropyLoss()
+    struct_head = nn.Linear(model.cfg.dim, NUM_STRUCT_BITS).to(device)
+    struct_criterion = nn.BCEWithLogitsLoss()
+
+    real_bench = None
+    if args.real_bench_root and os.path.exists(args.real_bench_root):
+        real_bench = RealBenchEval(args.real_bench_root)
+        print(f'>> real-bench: {len(real_bench.examples)} files from '
+              f'{args.real_bench_root} -- checkpoint selection uses this, not val')
+    elif args.real_bench_root:
+        print(f'>> real-bench root {args.real_bench_root} not found -- '
+              f'falling back to val-only checkpoint selection')
 
     steps_per_epoch = args.max_steps or len(train_loader)
     total_steps = steps_per_epoch * args.epochs
     opt = torch.optim.AdamW(
-        list(model.parameters()) + list(lang_head.parameters()),
+        list(model.parameters()) + list(lang_head.parameters()) + list(struct_head.parameters()),
         lr=args.lr, weight_decay=0.01)
     if resume_ck is not None:
         # No ramp-up: the loaded model is already past warmup, and a fresh
@@ -211,7 +285,16 @@ def main() -> None:
         sched = torch.optim.lr_scheduler.OneCycleLR(
             opt, max_lr=args.lr, total_steps=total_steps, pct_start=0.15)
 
-    best = resume_ck['weighted'] if resume_ck is not None else -1.0
+    if resume_ck is None:
+        best = -1.0
+    elif real_bench is not None:
+        # A resumed checkpoint's stored 'weighted' is a val-split score, not
+        # comparable to real-bench selection; re-baseline against the real
+        # bench once instead of starting from an unrelated number.
+        best = real_bench.evaluate(model, device)['weighted']
+        print(f'>> resumed checkpoint scores {100 * best:.2f}% on the real bench')
+    else:
+        best = resume_ck['weighted']
     history = []
     for epoch in range(1, args.epochs + 1):
         quant = resume_ck is not None or epoch > args.warmup_epochs
@@ -220,15 +303,18 @@ def main() -> None:
         t0 = time.time()
         run_loss = 0.0
         run_aux = 0.0
+        run_struct = 0.0
         aux_hit = aux_tot = 0
+        struct_hit = struct_tot = 0
         hit = tot = 0
         for step, batch in enumerate(train_loader):
             if args.max_steps and step >= args.max_steps:
                 break
             feats, labels, valid, lang = to_device(batch, device)
             want_sig = args.lang_loss > 0
-            out = model(feats, valid, return_signature=want_sig)
-            logits, sig = out if want_sig else (out, None)
+            want_struct = args.struct_loss > 0
+            out = model(feats, valid, return_signature=want_sig or want_struct)
+            logits, sig, token_repr = out if (want_sig or want_struct) else (out, None, None)
             loss = criterion(logits.reshape(-1, NUM_CLASSES), labels.reshape(-1))
             if want_sig:
                 aux = lang_criterion(lang_head(sig), lang)
@@ -236,6 +322,16 @@ def main() -> None:
                 run_aux += aux.item()
                 aux_hit += (lang_head(sig).argmax(-1) == lang).sum().item()
                 aux_tot += lang.numel()
+            if want_struct:
+                struct_target = structural_targets(feats, labels)
+                struct_logits = struct_head(token_repr)
+                m3 = valid.unsqueeze(-1).expand_as(struct_target)
+                struct = struct_criterion(struct_logits[m3], struct_target[m3])
+                loss = loss + args.struct_loss * struct
+                run_struct += struct.item()
+                with torch.no_grad():
+                    struct_hit += (((struct_logits > 0) == (struct_target > 0.5)) & m3).sum().item()
+                    struct_tot += m3.sum().item()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -257,25 +353,57 @@ def main() -> None:
         # conditioning downstream is only as good as the signature it reads.
         aux_str = (f' lang {100 * aux_hit / max(1, aux_tot):.1f}%'
                    if aux_tot else '')
+        struct_str = (f' struct {100 * struct_hit / max(1, struct_tot):.1f}%'
+                      if struct_tot else '')
+
+        bench_result = None
+        bench_str = ''
+        if real_bench is not None and quant:
+            bench_result = real_bench.evaluate(model, device)
+            bench_str = (f' | REAL-BENCH {100 * bench_result["weighted"]:.2f}% '
+                         f'micro {100 * bench_result["micro"]:.2f}%')
+
         print(f'Epoch {epoch:2d}/{args.epochs} [{mode}] {time.time() - t0:.0f}s '
               f'train_loss {run_loss / steps_per_epoch:.4f} '
-              f'train_acc {100 * hit / max(1, tot):.1f}%{aux_str} | '
+              f'train_acc {100 * hit / max(1, tot):.1f}%{aux_str}{struct_str} | '
               f'val_loss {val["loss"]:.4f} '
-              f'WEIGHTED {100 * val["weighted"]:.2f}% micro {100 * val["micro"]:.2f}%',
+              f'WEIGHTED {100 * val["weighted"]:.2f}% micro {100 * val["micro"]:.2f}%{bench_str}',
               flush=True)
-        history.append({'epoch': epoch, 'quant': quant, **{
-            k: v for k, v in val.items() if k != 'per_lang'}})
+        history.append({'epoch': epoch, 'quant': quant,
+                        **{k: v for k, v in val.items() if k != 'per_lang'},
+                        **({'real_bench_weighted': bench_result['weighted'],
+                            'real_bench_micro': bench_result['micro']}
+                           if bench_result is not None else {})})
+
+        if args.mine_weak_languages:
+            lang_index = {l: i for i, l in enumerate(TARGET_LANGUAGES)}
+            mult = np.ones(len(TARGET_LANGUAGES))
+            for lang, acc in val['per_lang'].items():
+                i = lang_index.get(lang)
+                if i is not None:
+                    mult[i] = np.clip(2.0 - 2.0 * acc, 0.5, 3.0)
+            new_weight = base_per_window_weight * mult[ds['train'].langs]
+            train_sampler.weights = torch.from_numpy(new_weight).double()
+            worst = sorted(val['per_lang'].items(), key=lambda kv: kv[1])[:5]
+            print(f"   mining: boosted sampling for "
+                  f"{', '.join(f'{l} ({100 * a:.0f}%)' for l, a in worst)}")
 
         # Only checkpoint from the quantized regime: a full-precision model that
-        # scores well says nothing about what ships.
-        if quant and val['weighted'] > best:
-            best = val['weighted']
+        # scores well says nothing about what ships. Selection uses the real
+        # bench when available -- that is the number that actually gets
+        # published -- and falls back to the internal val split otherwise.
+        selection_score = bench_result['weighted'] if bench_result is not None else val['weighted']
+        if quant and selection_score > best:
+            best = selection_score
             torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(),
                         'weighted': val['weighted'], 'micro': val['micro'],
                         'per_lang': val['per_lang'], 'per_class': val['per_class'],
+                        'real_bench_weighted': bench_result['weighted'] if bench_result else None,
+                        'real_bench_micro': bench_result['micro'] if bench_result else None,
                         'config': vars(model.cfg)},
                        os.path.join(args.out_dir, 'best_model.pt'))
-            print(f'   -> saved best (weighted {100 * best:.2f}%)')
+            label = 'real-bench' if bench_result is not None else 'val'
+            print(f'   -> saved best ({label} {100 * best:.2f}%)')
 
     with open(os.path.join(args.out_dir, 'history.json'), 'w') as fh:
         json.dump(history, fh, indent=2)
@@ -288,8 +416,8 @@ def main() -> None:
         model.load_state_dict(ck['model_state_dict'], strict=False)
     rep = export.export_model(model, args.out_dir)
     print(f"\n>> exported {rep['kb']:.2f} KB, round-trip max error {rep['max_abs_error']:.2e}")
-    print(f">> best weighted agreement with Shiki: {100 * best:.2f}% "
-          f"(gpu-lexer reference: 90.20%)")
+    label = 'real-bench weighted accuracy' if real_bench is not None else 'weighted agreement with Shiki (val)'
+    print(f">> best {label}: {100 * best:.2f}% (gpu-lexer's own Prism.js reference: 84.19%)")
 
 
 if __name__ == '__main__':

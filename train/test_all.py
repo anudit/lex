@@ -362,9 +362,11 @@ def test_language_weights_normalized():
 
 
 @test
-def test_split_is_deterministic_and_by_file():
-    """A file must always land in the same split, or test data leaks into train."""
-    names = [f'repo__src_file_{i}.py' for i in range(3000)]
+def test_split_is_deterministic_and_by_content():
+    """Identical file content must always land in the same split -- hashing by
+    content (not path) is what keeps a duplicate/vendored file from leaking
+    across train/val/test, even when fetched under a different repo path."""
+    names = [f'repo__src_file_{i}.py content body {i}' for i in range(3000)]
     first = [dp.split_of(n) for n in names]
     second = [dp.split_of(n) for n in names]
     assert first == second, 'split is not deterministic'
