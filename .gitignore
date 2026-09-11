@@ -9,3 +9,5 @@ train/corpus
 demo/dist
 summary.md
 .DS_Store
+lex/.DS_Store
+train/*.log

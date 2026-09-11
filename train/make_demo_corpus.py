@@ -25,7 +25,10 @@ import random
 from pathlib import Path
 
 from data_pipeline import split_of
-from languages import TARGET_LANGUAGES, TOP25_PUSHER_SHARE, shiki_id, weights
+from languages import (
+    TARGET_LANGUAGES, TOP25_PUSHER_SHARE, TRAIN_EXCLUDED_LANGUAGES,
+    shiki_id, weights,
+)
 
 MAX_CHARS = 6_000
 MIN_CHARS = 300
@@ -95,6 +98,8 @@ def main() -> None:
     if args.name == 'CORPUS':
         body = (f'export const WEIGHTS = {json.dumps(w, indent=2)};\n\n'
                 f'export const TOP25 = {json.dumps(sorted(TOP25_PUSHER_SHARE))};\n\n'
+                f'export const EXCLUDED = '
+                f'{json.dumps(sorted(TRAIN_EXCLUDED_LANGUAGES))};\n\n'
                 + body)
     out.write_text(header + body)
     langs = {f['lang'] for f in files}

@@ -94,6 +94,32 @@ TARGET_LANGUAGES: tuple[str, ...] = tuple(sorted(
     set(TOP50_PUSHER_SHARE) | set(SUGAR_HIGH_29)
 ))
 
+# Low-popularity languages excluded from the primary training recipe. Keep them
+# in TARGET_LANGUAGES so existing dataset ids stay stable and the frozen
+# 57-language coverage evaluation continues to expose regressions.
+TRAIN_EXCLUDED_LANGUAGES: frozenset[str] = frozenset({
+    'gherkin', 'groovy', 'm4', 'qmake', 'starlark',
+})
+TRAIN_LANGUAGES: tuple[str, ...] = tuple(
+    lang for lang in TARGET_LANGUAGES if lang not in TRAIN_EXCLUDED_LANGUAGES
+)
+
+# gpu-lexer's verification benchmark uses family names from Linguist rather
+# than this corpus's directory names. Procfile is lexed as shell here, so its
+# pusher weight is intentionally added to shell's sampling probability.
+BENCHMARK_FAMILY_TO_LANGUAGE: dict[str, str] = {
+    'makefile': 'make',
+    'batchfile': 'bat',
+    'plpgsql': 'sql',
+    'objective-c': 'objc',
+    'assembly': 'asm',
+    'procfile': 'shell',
+}
+
+
+def benchmark_family_language(family: str) -> str:
+    return BENCHMARK_FAMILY_TO_LANGUAGE.get(family, family)
+
 # Weight floor for languages outside the top 50, as a share point.
 TAIL_SHARE = 0.25
 

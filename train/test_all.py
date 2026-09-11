@@ -45,6 +45,10 @@ PASSED: list[str] = []
 FAILED: list[tuple[str, str]] = []
 
 
+def deployment_config() -> LexerConfig:
+    return LexerConfig(film_rank=32, erase_rank=8)
+
+
 def _fn_bodies(src: str) -> dict[str, str]:
     """Crude WGSL function splitter: good enough to see which globals a body names."""
     bodies: dict[str, str] = {}
@@ -124,7 +128,7 @@ def test_quantizer_matches_dequantized_codes():
 @test
 def test_export_roundtrip():
     """Every parameter ships, and reconstructs to what training produced."""
-    m = NeuralLexer(LexerConfig())
+    m = NeuralLexer(deployment_config())
     m.eval()
     with tempfile.TemporaryDirectory() as d:
         rep = export.export_model(m, d)  # raises if any parameter is unexported
@@ -141,17 +145,17 @@ def test_export_roundtrip():
 # was added; that was a deliberate trade of 6 KB for the ability to route the
 # document signature through every layer. The assertion tracks the budget that
 # was actually agreed, and still checks that the reported size matches the file.
-# film_rank=48 added another ~0.75 KB on top of that: film.up's rows must be
-# padded to the next 32-bit word boundary (48 is not a multiple of 32) so the
-# shader's row * words_per_row addressing stays valid -- see wgsl.py / export.py.
-SIZE_BUDGET_KB = 35.5
+# The selective-reset recipe uses word-aligned FiLM rank 32 and spends the
+# reclaimed bytes on rank-8 erase projections. The hard deployment budget is
+# 40 KiB; the current exact export remains comfortably below it.
+SIZE_BUDGET_KB = 40.0
 GPU_LEXER_KB = 31.0
 
 
 @test
 def test_packed_size_within_budget():
     """Size is a headline claim, so it is asserted, not reported."""
-    m = NeuralLexer(LexerConfig())
+    m = NeuralLexer(deployment_config())
     r = m.size_report()
     with tempfile.TemporaryDirectory() as d:
         actual = export.export_model(m, d)['kb']
@@ -165,7 +169,7 @@ def test_packed_size_within_budget():
 @test
 def test_numpy_reference_matches_torch():
     """The reference implementation is the shader's spec; it must match torch."""
-    m = NeuralLexer(LexerConfig())
+    m = NeuralLexer(deployment_config())
     m.eval()
     m.set_quant(True)
     with tempfile.TemporaryDirectory() as d:
@@ -189,7 +193,7 @@ def test_no_nan_on_extremes():
     gives inf/inf. The GELU in the head reaches that range on ordinary input, and
     the failure is silent: NaN logits make argmax return class 0.
     """
-    m = NeuralLexer(LexerConfig())
+    m = NeuralLexer(deployment_config())
     m.eval()
     m.set_quant(True)
     B, T = 1, 64
@@ -206,7 +210,7 @@ def test_no_nan_on_extremes():
 @test
 def test_shader_generates_and_covers_pipeline():
     """Every entry point the runtime dispatches must exist in the shader."""
-    m = NeuralLexer(LexerConfig())
+    m = NeuralLexer(deployment_config())
     with tempfile.TemporaryDirectory() as d:
         export.export_model(m, d)
         meta = json.loads((Path(d) / 'weights.meta.json').read_text())
@@ -214,6 +218,10 @@ def test_shader_generates_and_covers_pipeline():
     steps = wgsl.pipeline_order(meta['config']['n_layers'])
     for step in steps:
         assert f"fn {step['entry']}(" in src, f"missing entry point {step['entry']}"
+    assert src.count('Low-rank input-conditioned erase') == meta['config']['n_layers']
+    assert 'base_f * (1.0 - scratch[r_fw' in src
+    assert 'dotRed32(planes[FU_P + o])' in src
+    assert 'planes[FU_P + o * 2u]' not in src
     worst, worst_entry = _max_workgroup_bytes(src, [s['entry'] for s in steps])
     # WebGPU guarantees only 16 KB of workgroup storage, and the limit applies
     # per entry point over what it transitively references -- not to the module.
@@ -359,6 +367,37 @@ def test_language_weights_normalized():
     assert abs(sum(w.values()) - 1.0) < 1e-9, f'weights sum to {sum(w.values())}'
     assert set(w) == set(TARGET_LANGUAGES)
     return f'{len(w)} languages sum to 1.0'
+
+
+@test
+def test_training_language_policy_and_sampler():
+    from languages import TRAIN_EXCLUDED_LANGUAGES, TRAIN_LANGUAGES
+    from train import sampling_probabilities
+    assert len(TRAIN_LANGUAGES) == 52, len(TRAIN_LANGUAGES)
+    assert len(TRAIN_EXCLUDED_LANGUAGES) == 5
+    probs = sampling_probabilities(None, exponent=0.5, tail_floor=0.001,
+                                   include_excluded=False)
+    assert abs(float(probs.sum()) - 1.0) < 1e-12
+    for i, lang in enumerate(TARGET_LANGUAGES):
+        if lang in TRAIN_EXCLUDED_LANGUAGES:
+            assert probs[i] == 0, f'{lang} still receives training draws'
+        else:
+            assert probs[i] > 0, f'{lang} was accidentally starved'
+    return '52 active, 5 zero-probability exclusions, normalized'
+
+
+@test
+def test_boundary_detection_crosses_masked_whitespace():
+    from train import _boundary_counts, _boundary_masks
+    labels = torch.tensor([[1, MASK, MASK, 2, MASK, 2]])
+    correct = labels.clone()
+    adjacent, gold, predicted = _boundary_masks(labels, correct)
+    assert gold.sum() == 1 and predicted.sum() == 1
+    assert adjacent[0, 0] and adjacent[0, 3]
+    assert _boundary_counts(labels, correct) == (1, 1, 1)
+    missed = torch.tensor([[1, 0, 0, 1, 0, 1]])
+    assert _boundary_counts(labels, missed) == (0, 0, 1)
+    return 'nearest scored-token transition is counted across whitespace'
 
 
 @test

@@ -186,12 +186,22 @@ fn dotRed64(w0: u32, w1: u32) -> f32 {
     for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w1, k, red[32u + k]); }
     return a;
 }
+fn dotRed32(w: u32) -> f32 {
+    var a: f32 = 0.0;
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w, k, red[k]); }
+    return a;
+}
 fn dotB128(w0: u32, w1: u32, w2: u32, w3: u32, base: u32) -> f32 {
     var a: f32 = 0.0;
     for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w0, k, tB[base + k]); }
     for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w1, k, tB[base + 32u + k]); }
     for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w2, k, tB[base + 64u + k]); }
     for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w3, k, tB[base + 96u + k]); }
+    return a;
+}
+fn dotB32(w: u32, base: u32) -> f32 {
+    var a: f32 = 0.0;
+    for (var k: u32 = 0u; k < 32u; k = k + 1u) { a = a + m1(w, k, tB[base + k]); }
     return a;
 }
 
@@ -340,8 +350,7 @@ fn film(@builtin(local_invocation_id) lid: vec3<u32>,
     // 2 * DIM outputs per layer, spread across the 64 threads.
     let n_out = NLAYER * 2u * DIM;
     for (var o = d; o < n_out; o = o + 64u) {
-        let raw = fp[FU_BI + o] + fp[FU_S + o] * dotRed64(
-            planes[FU_P + o * 2u], planes[FU_P + o * 2u + 1u]);
+        let raw = fp[FU_BI + o] + fp[FU_S + o] * __FILM_UP_DOT__;
         let l = o / (2u * DIM);
         let rem = o % (2u * DIM);
         let c = rem % DIM;
@@ -425,6 +434,86 @@ fn l{L}_scan(@builtin(local_invocation_id) lid: vec3<u32>,
 }}
 '''
 
+SCAN_SELECTIVE = r'''
+@compute @workgroup_size(64)
+fn l{L}_scan(@builtin(local_invocation_id) lid: vec3<u32>,
+             @builtin(workgroup_id) wid: vec3<u32>) {{
+    let d = lid.x;
+    let job = jobs[wid.y];
+    let T = job.token_count;
+    let sbase = NREG * job.stride * wid.y;
+    let r_b = sbase + job.stride;
+    let r_fw = sbase + 2u * job.stride;
+    let r_bw = sbase + 3u * job.stride;
+
+    let base_f = sigmoid_s(fp[{DF_F}u + d]);
+    let base_b = sigmoid_s(fp[{DB_F}u + d]);
+    var hf: f32 = 0.0;
+    for (var t: u32 = 0u; t < T; t = t + 1u) {{
+        let bt = scratch[r_b + t * DIM + d];
+        let aft = base_f * (1.0 - scratch[r_fw + t * DIM + d]);
+        hf = aft * hf + bt;
+        scratch[r_fw + t * DIM + d] = hf;
+    }}
+    var hb: f32 = 0.0;
+    for (var t: u32 = 0u; t < T; t = t + 1u) {{
+        let ti = T - 1u - t;
+        let bt = scratch[r_b + ti * DIM + d];
+        let abt = base_b * (1.0 - scratch[r_bw + ti * DIM + d]);
+        hb = abt * hb + bt;
+        scratch[r_bw + ti * DIM + d] = hb;
+    }}
+}}
+'''
+
+
+def _erase_body(tensors: dict, layer: int) -> str:
+    down = tensors[f'layers.{layer}.erase_down']
+    up = tensors[f'layers.{layer}.erase_up']
+    rank = down['shape'][0]
+    body = r'''
+    // Low-rank input-conditioned erase. tB is zero-padded to 32 values so the
+    // packed up projection remains word-aligned for ranks below 32.
+    if (d < 32u) {
+        for (var j: u32 = 0u; j < TILE; j = j + 1u) {
+            let t = base_t + j;
+            var v: f32 = 0.0;
+            if (t < T && d < __ERANK__u) {
+                let raw = fp[__ED_BI__u + d] + fp[__ED_S__u + d] * dotA64(
+                    planes[__ED_P__u + d * 2u], planes[__ED_P__u + d * 2u + 1u],
+                    j * DIM);
+                v = tanh_s(raw);
+            }
+            tB[j * 2u * DIM + d] = v;
+        }
+    }
+    workgroupBarrier();
+    for (var j: u32 = 0u; j < TILE; j = j + 1u) {
+        let t = base_t + j;
+        if (t < T) {
+            let ef = fp[__EU_BI__u + d] + fp[__EU_S__u + d] * dotB32(
+                planes[__EU_P__u + d], j * 2u * DIM);
+            let eb = fp[__EU_BI__u + DIM + d] + fp[__EU_S__u + DIM + d] * dotB32(
+                planes[__EU_P__u + DIM + d], j * 2u * DIM);
+            scratch[r_fw + t * DIM + d] = sigmoid_s(ef);
+            scratch[r_bw + t * DIM + d] = sigmoid_s(eb);
+        }
+    }
+    workgroupBarrier();
+'''
+    replacements = {
+        '__ERANK__': str(rank),
+        '__ED_P__': str(down['plane_offset']),
+        '__ED_S__': str(down['scale_offset']),
+        '__ED_BI__': str(down['bias_offset']),
+        '__EU_P__': str(up['plane_offset']),
+        '__EU_S__': str(up['scale_offset']),
+        '__EU_BI__': str(up['bias_offset']),
+    }
+    for key, value in replacements.items():
+        body = body.replace(key, value)
+    return body
+
 LAYER_TEMPLATE = r'''
 // ---- layer {L} -------------------------------------------------------------
 
@@ -471,6 +560,8 @@ fn l{L}_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let sbase = NREG * job.stride * wid.y;
     let r_nrm = sbase;
     let r_b = sbase + job.stride;
+    let r_fw = sbase + 2u * job.stride;
+    let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
     let pic0 = planes[{PI_P}u + d * 2u];
@@ -503,6 +594,7 @@ fn l{L}_conv(@builtin(local_invocation_id) lid: vec3<u32>,
         tA[j * DIM + d] = acc;
     }}
     workgroupBarrier();
+{ERASE_BODY}
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {{
         let t = base_t + j;
         if (t < T) {{
@@ -791,11 +883,29 @@ def generate(meta: dict) -> str:
     cfg = meta['config']
     n = cfg['n_layers']
     dilations = cfg.get('dilations', (1, 2, 4))
+    film_up = t['film.up']
+    film_up_words = film_up['words_per_row']
+    if film_up_words == 1:
+        film_up_dot = 'dotRed32(planes[FU_P + o])'
+    elif film_up_words == 2:
+        film_up_dot = ('dotRed64(planes[FU_P + o * 2u], '
+                       'planes[FU_P + o * 2u + 1u])')
+    else:
+        raise ValueError(f'unsupported FiLM up row width: {film_up_words} words')
+    signature = SIGNATURE.replace('__FILM_UP_DOT__', film_up_dot)
+
     parts = ['// Generated by wgsl.py -- do not edit.\n'
              '// Multi-entry-point pipeline; see the module docstring for the split.\n',
-             _consts(meta), PRELUDE, EMBED, SIGNATURE]
+             _consts(meta), PRELUDE, EMBED, signature]
     for i in range(n):
-        if f'layers.{i}.reset_f' in t:
+        if f'layers.{i}.erase_down' in t:
+            scan_body = SCAN_SELECTIVE.format(
+                L=i,
+                DF_F=t[f'layers.{i}.decay_f']['f16_offset'],
+                DB_F=t[f'layers.{i}.decay_b']['f16_offset'],
+            )
+            erase_body = _erase_body(t, i)
+        elif f'layers.{i}.reset_f' in t:
             scan_body = SCAN_DYNAMIC.format(
                 L=i,
                 DF_F=t[f'layers.{i}.decay_f']['f16_offset'],
@@ -803,17 +913,20 @@ def generate(meta: dict) -> str:
                 RF_F=t[f'layers.{i}.reset_f']['f16_offset'],
                 RB_F=t[f'layers.{i}.reset_b']['f16_offset'],
             )
+            erase_body = ''
         else:
             scan_body = SCAN_STATIC.format(
                 L=i,
                 DF_F=t[f'layers.{i}.decay_f']['f16_offset'],
                 DB_F=t[f'layers.{i}.decay_b']['f16_offset'],
             )
+            erase_body = ''
         dil = dilations[i] if i < len(dilations) else 1
         parts.append(LAYER_TEMPLATE.format(
             L=i,
             DIL=dil,
             SCAN_BODY=scan_body,
+            ERASE_BODY=erase_body,
             NORM_F=t[f'layers.{i}.norm.weight']['f16_offset'],
             OG_F=t[f'layers.{i}.out_gate']['f16_offset'],
             DW_P=t[f'layers.{i}.dw']['plane_offset'],

@@ -73,17 +73,34 @@ def stages_for(ref: reference.Reference, code: str) -> dict[str, list]:
         conv += ref.B(f'layers.{L}.dw')
         proj = conv @ ref.W(f'layers.{L}.proj_in').T + ref.B(f'layers.{L}.proj_in')
         b = np.tanh(proj[:, :D]) * _sigmoid(proj[:, D:])
-        af = _sigmoid(ref.F(f'layers.{L}.decay_f'))
-        ab = _sigmoid(ref.F(f'layers.{L}.decay_b'))
+        has_erase = f'layers.{L}.erase_down' in ref.meta['tensors']
+        has_reset = f'layers.{L}.reset_f' in ref.meta['tensors']
+        if has_erase:
+            erase_h = np.tanh(
+                conv @ ref.W(f'layers.{L}.erase_down').T
+                + ref.B(f'layers.{L}.erase_down'))
+            erase = _sigmoid(
+                erase_h @ ref.W(f'layers.{L}.erase_up').T
+                + ref.B(f'layers.{L}.erase_up'))
+            af = _sigmoid(ref.F(f'layers.{L}.decay_f'))[None, :] * (1.0 - erase[:, :D])
+            ab = _sigmoid(ref.F(f'layers.{L}.decay_b'))[None, :] * (1.0 - erase[:, D:])
+        elif has_reset:
+            rf = np.log1p(np.exp(ref.F(f'layers.{L}.reset_f')))[None, :]
+            rb = np.log1p(np.exp(ref.F(f'layers.{L}.reset_b')))[None, :]
+            af = _sigmoid(ref.F(f'layers.{L}.decay_f')[None, :] - rf * np.abs(b))
+            ab = _sigmoid(ref.F(f'layers.{L}.decay_b')[None, :] - rb * np.abs(b))
+        else:
+            af = _sigmoid(ref.F(f'layers.{L}.decay_f'))
+            ab = _sigmoid(ref.F(f'layers.{L}.decay_b'))
         fwd = np.zeros_like(b)
         acc = np.zeros(D, dtype=np.float32)
         for t in range(T):
-            acc = af * acc + b[t]
+            acc = (af[t] if (has_erase or has_reset) else af) * acc + b[t]
             fwd[t] = acc
         bwd = np.zeros_like(b)
         acc = np.zeros(D, dtype=np.float32)
         for t in range(T - 1, -1, -1):
-            acc = ab * acc + b[t]
+            acc = (ab[t] if (has_erase or has_reset) else ab) * acc + b[t]
             bwd[t] = acc
         y = (np.concatenate([fwd, bwd], -1) @ ref.W(f'layers.{L}.proj_out').T
              + ref.B(f'layers.{L}.proj_out'))

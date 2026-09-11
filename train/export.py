@@ -129,6 +129,8 @@ def export_model(model: NeuralLexer, out_dir: str, verify: bool = True) -> dict:
             'dim': cfg.dim, 'embed_dim': cfg.embed_dim, 'n_layers': cfg.n_layers,
             'kernel_size': cfg.kernel_size, 'head_hidden': cfg.head_hidden,
             'num_classes': cfg.num_classes,
+            'film_rank': cfg.film_rank,
+            'erase_rank': getattr(cfg, 'erase_rank', 0),
             'dilations': list(getattr(cfg, 'dilations', (1, 2, 4))),
         },
         'field_sizes': dict(FIELD_SIZES),

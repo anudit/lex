@@ -56,9 +56,12 @@ def main() -> None:
 
     ckpt = f'{args.checkpoint_dir}/best_model.pt'
     if not args.skip_eval:
-        run('held-out test split', py + ['eval.py', '--checkpoint', ckpt, '--split', 'test'])
-        run('error breakdown', py + ['diagnose.py', '--checkpoint', ckpt])
-        run('FiLM conditioning', py + ['film_check.py', '--checkpoint', ckpt])
+        run('held-out test split', py + ['eval.py', '--checkpoint', ckpt,
+                                         '--split', 'test', '--workers', '0'])
+        run('error breakdown', py + ['diagnose.py', '--checkpoint', ckpt,
+                                     '--workers', '0'])
+        run('FiLM conditioning', py + ['film_check.py', '--checkpoint', ckpt,
+                                       '--workers', '0'])
         run('points remaining to 95%', py + ['headroom_to_95.py', '--checkpoint', ckpt])
 
     print('\n=== browser checks (need `bun run dev` in demo/) ===')

@@ -86,9 +86,12 @@ class LexerConfig:
     # Dilated depthwise convolution rates per layer: expands receptive field from +-2
     # to +-14 tokens at zero parameter cost.
     dilations: tuple[int, ...] = (1, 2, 4)
-    # Rank of the FiLM projection from the document signature to per-layer
-    # scale/shift. 48 buys full conditioning for ~4.2 KB packed.
-    film_rank: int = 48
+    # Rank 32 is word-aligned in the packed runtime and leaves room for the
+    # selective erase projections below.
+    film_rank: int = 32
+    # A zero rank preserves compatibility with pre-selective-reset checkpoints.
+    # New training runs use rank 8 via train.py's default CLI.
+    erase_rank: int = 0
     # Architectural trick flags (all initialized for seamless backward-compatible start):
     use_dynamic_reset: bool = True   # state-dependent decay reset
     use_decl_gate: bool = True       # declaration-biased prefix in GlobalContext
@@ -280,6 +283,18 @@ class BidiGLUBlock(nn.Module):
         self.proj_in = QuantLinear(d, d * 2, bits=cfg.proj_bits)
         self.proj_out = QuantLinear(d * 2, d, bits=cfg.proj_bits)
         self.out_gate = nn.Parameter(torch.zeros(d))
+        self.erase_rank = getattr(cfg, 'erase_rank', 0)
+        if self.erase_rank > 0:
+            self.erase_down = QuantLinear(d, self.erase_rank, bits=cfg.proj_bits)
+            self.erase_up = QuantLinear(self.erase_rank, d * 2, bits=cfg.proj_bits)
+            # Start as a near-identity extension of the old recurrence. Zero
+            # latent weights remain negligible when first quantized because
+            # their learned row scale is clamped near zero.
+            nn.init.zeros_(self.erase_up.weight)
+            nn.init.constant_(self.erase_up.bias, -4.0)
+        else:
+            self.erase_down = None
+            self.erase_up = None
 
         f_min = getattr(cfg, 'decay_f_min', cfg.decay_min)
         f_max = getattr(cfg, 'decay_f_max', cfg.decay_max)
@@ -289,7 +304,7 @@ class BidiGLUBlock(nn.Module):
         init_b = _decay_logits(d, b_min, b_max)
         self.decay_f = nn.Parameter(init_f.clone())
         self.decay_b = nn.Parameter(init_b.clone())
-        if getattr(cfg, 'use_dynamic_reset', False):
+        if self.erase_rank == 0 and getattr(cfg, 'use_dynamic_reset', False):
             self.reset_f = nn.Parameter(torch.full((d,), -4.0))
             self.reset_b = nn.Parameter(torch.full((d,), -4.0))
         else:
@@ -317,7 +332,14 @@ class BidiGLUBlock(nn.Module):
         b = torch.tanh(cand) * torch.sigmoid(gate)
         b = b * valid.unsqueeze(-1).to(b.dtype)
 
-        if self.reset_f is not None:
+        if self.erase_down is not None:
+            erase = torch.sigmoid(self.erase_up(torch.tanh(self.erase_down(h))))
+            erase_f, erase_b = erase.chunk(2, dim=-1)
+            base_f = torch.sigmoid(self.decay_f).view(1, 1, -1)
+            base_b = torch.sigmoid(self.decay_b).view(1, 1, -1)
+            a_f = base_f * (1.0 - erase_f)
+            a_b = base_b * (1.0 - erase_b)
+        elif self.reset_f is not None:
             rf = F.softplus(self.reset_f).view(1, 1, -1)
             rb = F.softplus(self.reset_b).view(1, 1, -1)
             a_f = torch.sigmoid(self.decay_f.view(1, 1, -1) - rf * torch.abs(b))

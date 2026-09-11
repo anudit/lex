@@ -94,6 +94,7 @@ class RealBenchEval:
         was_training = model.training
         model.eval()
         per_family = defaultdict(lambda: {'correct': 0, 'total': 0})
+        boundary_tp = boundary_pred = boundary_gold = 0
         for family, toks, gold in self.examples:
             arrays = tokenizer.tokens_to_arrays(toks)
             feats = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in arrays.items()}
@@ -105,6 +106,14 @@ class RealBenchEval:
             bucket = per_family[family]
             bucket['correct'] += int((preds[mask] == gold[mask]).sum())
             bucket['total'] += int(mask.sum())
+            gold_scored = gold[mask]
+            pred_scored = preds[mask]
+            if len(gold_scored) > 1:
+                gold_boundary = gold_scored[1:] != gold_scored[:-1]
+                pred_boundary = pred_scored[1:] != pred_scored[:-1]
+                boundary_tp += int((gold_boundary & pred_boundary).sum())
+                boundary_pred += int(pred_boundary.sum())
+                boundary_gold += int(gold_boundary.sum())
         if was_training:
             model.train()
 
@@ -122,6 +131,7 @@ class RealBenchEval:
         return {
             'weighted': weighted,
             'micro': micro_correct / max(1, micro_total),
+            'boundary_f1': 2 * boundary_tp / max(1, boundary_pred + boundary_gold),
             'per_lang': per_lang,
             'files': len(self.examples),
         }
@@ -156,6 +166,7 @@ def main() -> None:
 
     print(f"\nreal-bench weighted accuracy: {100 * result['weighted']:.2f}%")
     print(f"real-bench micro accuracy:    {100 * result['micro']:.2f}%")
+    print(f"real-bench boundary F1:       {100 * result['boundary_f1']:.2f}%")
 
 
 if __name__ == '__main__':

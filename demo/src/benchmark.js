@@ -46,7 +46,7 @@ import {
   makeShikiAdapter, makeSugarHighAdapter, makePrismAdapter, makeSpanAdapter,
   agreement,
 } from './adapters.js';
-import { CORPUS, WEIGHTS } from './corpus.js';
+import { CORPUS, EXCLUDED, WEIGHTS } from './corpus.js';
 import { UNSEEN } from './corpus_unseen.js';
 
 export const PRISM_LANG = {
@@ -90,6 +90,8 @@ async function classesOf(adapter, code, lang, shikiLang) {
 
 /** Score one corpus, returning rows ready to render. */
 export async function measure(adapters, corpus, label, onStatus = () => {}) {
+  const excluded = new Set(EXCLUDED);
+  corpus = corpus.filter((item) => !excluded.has(item.lang));
   const ref = adapters.find((a) => a.reference);
   const others = adapters.filter((a) => !a.reference);
   const tally = new Map(others.map((a) => [a.name, new Map()]));

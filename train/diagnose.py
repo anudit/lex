@@ -69,13 +69,13 @@ def main() -> None:
     ap.add_argument('--checkpoint', default='./checkpoints/best_model.pt')
     ap.add_argument('--dataset', default='./corpus/dataset')
     ap.add_argument('--batch-size', type=int, default=32)
+    ap.add_argument('--workers', type=int, default=2)
     args = ap.parse_args()
 
     device = pick_device()
     ds, meta = dp.build(cache=args.dataset)
-    val = DataLoader(ds['val'], batch_size=args.batch_size, num_workers=2)
-    train_sample = DataLoader(ds['train'], batch_size=args.batch_size,
-                              num_workers=2, shuffle=True)
+    val = DataLoader(ds['val'], batch_size=args.batch_size,
+                     num_workers=args.workers)
 
     ck = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model = NeuralLexer(LexerConfig(**ck['config']) if 'config' in ck else LexerConfig()).to(device)

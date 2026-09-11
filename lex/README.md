@@ -1,6 +1,6 @@
 # lex
 
-Syntax highlighting from a 35 KB neural model running on WebGPU. Zero
+Syntax highlighting from a 36.15 KiB neural model running on WebGPU. Zero
 dependencies, no grammars, no per-language bundles.
 
 ```js
@@ -42,21 +42,28 @@ model reads those and predicts one of nine classes: `plain`, `comment`, `string`
 `number`, `keyword`, `type`, `function`, `constant`, `operator`.
 
 Because the features are language-agnostic, so is the model. It was trained on
-57 languages, and it will make a reasonable attempt at one it has never seen
-rather than failing outright.
+a 52-language primary set and will make a reasonable attempt at a language it
+has never seen rather than failing outright.
 
-The model is 154k parameters, quantized to 3 bits for the embedding table and
-1 bit for every projection, and ships inline as base85 -- 35 KB, no fetch.
+The model has 142,274 parameters, quantized to 3 bits for the embedding table,
+1 bit for projections, and 4 bits for depthwise kernels. It ships inline with
+no model fetch.
 
 It also reads a pooled *document signature* before any recurrent layer runs and
 uses it to modulate every layer. That is what lets one grammar-free model treat
 `$` as an operator in a shell script and as ordinary text in Markdown.
+Each recurrent layer also has a low-rank selective-erase gate, allowing closing
+delimiters to clear stale string or comment state without discarding unrelated
+long-range context.
 
 ## Accuracy
 
 Scored as agreement with [Shiki](https://shiki.style) over held-out files,
 per non-whitespace character, weighted by GitHub language popularity.
 `bun run dev` in `demo/` reproduces it.
+
+- **88.10%** on 1,199 files from repositories absent from training.
+- **90.24%** on 1,049 held-out files.
 
 ## Performance notes
 

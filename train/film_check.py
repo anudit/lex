@@ -28,6 +28,7 @@ def main() -> None:
     ap.add_argument('--checkpoint', default='./checkpoints/best_model.pt')
     ap.add_argument('--dataset', default='./corpus/dataset')
     ap.add_argument('--windows', type=int, default=2000)
+    ap.add_argument('--workers', type=int, default=2)
     args = ap.parse_args()
 
     device = pick_device()
@@ -45,7 +46,7 @@ def main() -> None:
               f'channels above 0.01: {int((np.abs(row) > 0.01).sum())}/{len(row)}')
 
     ds, _ = dp.build(cache=args.dataset)
-    loader = DataLoader(ds['val'], batch_size=64, num_workers=2)
+    loader = DataLoader(ds['val'], batch_size=64, num_workers=args.workers)
     per_lang: dict[int, list[np.ndarray]] = {}
     codes: list[np.ndarray] = []
     seen = 0
@@ -88,11 +89,11 @@ def main() -> None:
     for lang, d in sorted(dist.items(), key=lambda kv: -kv[1])[:8]:
         print(f'  {lang:12s} {d:.4f}')
 
-    _ablate(model, ds, device, ck)
+    _ablate(model, ds, device, ck, args.workers)
 
 
 @torch.no_grad()
-def _ablate(model, ds, device, ck) -> None:
+def _ablate(model, ds, device, ck, workers: int) -> None:
     """Upper bound on FiLM's contribution: switch it off at inference.
 
     This is not the same as training without FiLM -- the model has adapted to it,
@@ -108,7 +109,7 @@ def _ablate(model, ds, device, ck) -> None:
         print('\nno FiLM in this checkpoint')
         return
 
-    loader = DataLoader(ds['val'], batch_size=32, num_workers=2)
+    loader = DataLoader(ds['val'], batch_size=32, num_workers=workers)
     crit = nn.CrossEntropyLoss(ignore_index=dp.MASK)
 
     on = evaluate(model, loader, device, crit)

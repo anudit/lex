@@ -1,7 +1,7 @@
 {
   "name": "lex",
   "version": "0.1.0",
-  "description": "Language-agnostic syntax highlighting from a 30 KB neural model running on WebGPU",
+  "description": "Language-agnostic syntax highlighting from a 36 KiB neural model running on WebGPU",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,

@@ -100,8 +100,19 @@ class Reference:
             cand, gate = proj[:, :D], proj[:, D:]
             b = np.tanh(cand) * _sigmoid(gate)
 
+            has_erase = f'layers.{L}.erase_down' in self.meta['tensors']
             has_reset = f'layers.{L}.reset_f' in self.meta['tensors']
-            if has_reset:
+            if has_erase:
+                erase_h = np.tanh(
+                    conv @ self.W(f'layers.{L}.erase_down').T
+                    + self.B(f'layers.{L}.erase_down'))
+                erase = _sigmoid(
+                    erase_h @ self.W(f'layers.{L}.erase_up').T
+                    + self.B(f'layers.{L}.erase_up'))
+                ef, eb = erase[:, :D], erase[:, D:]
+                af = _sigmoid(self.F(f'layers.{L}.decay_f'))[None, :] * (1.0 - ef)
+                ab = _sigmoid(self.F(f'layers.{L}.decay_b'))[None, :] * (1.0 - eb)
+            elif has_reset:
                 rf = np.log1p(np.exp(self.F(f'layers.{L}.reset_f')))[None, :]
                 rb = np.log1p(np.exp(self.F(f'layers.{L}.reset_b')))[None, :]
                 af = _sigmoid(self.F(f'layers.{L}.decay_f')[None, :] - rf * np.abs(b))
@@ -113,13 +124,13 @@ class Reference:
             fwd = np.zeros_like(b)
             acc = np.zeros(D, dtype=np.float32)
             for t in range(T):
-                aft = af[t] if has_reset else af
+                aft = af[t] if (has_erase or has_reset) else af
                 acc = aft * acc + b[t]
                 fwd[t] = acc
             bwd = np.zeros_like(b)
             acc = np.zeros(D, dtype=np.float32)
             for t in range(T - 1, -1, -1):
-                abt = ab[t] if has_reset else ab
+                abt = ab[t] if (has_erase or has_reset) else ab
                 acc = abt * acc + b[t]
                 bwd[t] = acc
 
