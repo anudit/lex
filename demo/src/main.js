@@ -1,29 +1,44 @@
-// Benchmark: five highlighters, two questions.
+// Benchmark: two tabs, sharing a field of highlighters -- lex-lite's bench (5:
+// gpu-lexer, Prism.js, Sugar High, Shiki, plus lex-lite) over ~50 mainstream
+// languages, lex-large's bench (6: the same four plus highlight.js, plus
+// lex-large) over the ~190-grammar train_large corpus, where highlight.js's
+// own ~193-grammar coverage actually applies.
 //
 // Correctness is measured once and committed to results.json, because the answer
-// only changes when the model or the corpora change -- recomputing 1,555 files on
-// every page load costs ~90 seconds and a GPU device to redraw a static bar
-// chart. Regenerate with `bun run capture`. Latency is different: it depends on
-// the machine viewing the page, so it stays a live button.
+// only changes when the model or the corpora change -- recomputing thousands of
+// files on every page load costs a lot of time and a GPU device to redraw a
+// static bar chart. Regenerate with `bun run capture`. Latency is different: it
+// depends on the machine viewing the page, so it stays a live button.
 //
-//   Correctness -- popularity-weighted agreement with Shiki, over two corpora.
+//   Correctness -- popularity-weighted agreement with Shiki, over three corpora.
 //     Shiki is the normalization reference; every other library's token names are
 //     mapped onto the same nine classes and compared per non-whitespace
 //     character. Languages a library does not support score zero, which is the
 //     honest treatment: an unhighlighted file is a wrong answer, not a missing
 //     measurement.
 //
-//     "held-out files" holds out files but not repositories, so lex has seen the
-//     house style; "unseen repos" is drawn from repositories absent from the
-//     training corpus, where every engine is equally out of distribution. The
-//     second is the number to quote in a head-to-head.
+//     "held-out files" holds out files but not repositories, so lex-lite has seen
+//     the house style; "unseen repos" is drawn from repositories absent from the
+//     training corpus, where every engine is equally out of distribution -- the
+//     one to quote in a head-to-head between lex-lite and the field. "train_large
+//     corpus" is the 193-grammar bench lex-large trained on (train_large/corpus):
+//     out of distribution for lex-lite and every non-lex engine, in distribution
+//     house style for lex-large, so it shows breadth of coverage rather than a
+//     fair head-to-head.
 //
 
 import './style.css';
 import { WEIGHTS, TOP25 } from './corpus.js';
+import { WEIGHTS_LARGE } from './corpus_large.js';
 import RESULTS from './results.json';
 import { boot } from './benchmark.js';
 import { CLASS_NAMES } from './adapters.js';
+
+const WEIGHTS_BY_LABEL = {
+  'unseen repos': WEIGHTS,
+  'held-out files': WEIGHTS,
+  'train_large corpus': WEIGHTS_LARGE,
+};
 
 const pct = (n) => `${(n * 100).toFixed(2)}%`;
 
@@ -33,10 +48,12 @@ app.innerHTML = `
   <header>
     <h1>lex vs. the field</h1>
     <p class="sub">
-      Five highlighters normalized to the same nine syntax classes and scored
-      against <strong>Shiki</strong> per non-whitespace character, weighted by
-      GitHub language popularity. A language an engine does not support scores
-      zero &mdash; an unhighlighted file is a wrong answer, not a missing
+      lex-lite and lex-large (ours) against gpu-lexer, Prism.js, Sugar High,
+      and &mdash; on the ~190-language lex-large bench &mdash; highlight.js
+      too, all normalized to the same nine syntax classes and scored against
+      <strong>Shiki</strong> per non-whitespace character, weighted by GitHub
+      language popularity. A language an engine does not support scores zero
+      &mdash; an unhighlighted file is a wrong answer, not a missing
       measurement.
     </p>
   </header>
@@ -69,6 +86,14 @@ app.innerHTML = `
     </div>
   </section>
 
+  <div class="tabs" id="corpus-tabs" role="tablist">
+    <button class="tab-btn active" data-group="lite" type="button" role="tab" aria-selected="true">
+      lex-lite &middot; ~50 languages
+    </button>
+    <button class="tab-btn" data-group="large" type="button" role="tab" aria-selected="false">
+      lex-large &middot; ~190 languages
+    </button>
+  </div>
   <div id="results"></div>
   <div class="controls">
     <button id="run-latency" class="primary" type="button">Run latency</button>
@@ -103,6 +128,7 @@ const AGREEMENT_BUCKETS = [
 const AGREEMENT_TITLE = {
   'held-out files': 'Held-out',
   'unseen repos': 'Unseen-repos',
+  'train_large corpus': 'train_large',
 };
 
 function renderAgreementTable(lexRow, present, label) {
@@ -132,14 +158,15 @@ function renderAgreementTable(lexRow, present, label) {
     </div>`;
 }
 
-function renderCorrectness(rows, label, nFiles, present) {
+function renderCorrectness(rows, label, nFiles, present, group) {
+  const weights = WEIGHTS_BY_LABEL[label] ?? WEIGHTS;
   const best = Math.max(...rows.map((r) => r.weighted));
   const top = rows.reduce((a, b) => (b.weighted > a.weighted ? b : a));
-  const langs = Object.keys(WEIGHTS)
+  const langs = Object.keys(weights)
     .filter((l) => present.has(l))
-    .sort((a, b) => WEIGHTS[b] - WEIGHTS[a]);
+    .sort((a, b) => weights[b] - weights[a]);
   const section = `
-    <section data-corpus="${label}">
+    <section data-corpus="${label}" data-group="${group}">
       <div class="section-head">
         <h2>Correctness — ${label}</h2>
         <span class="meta">popularity-weighted agreement · higher is better</span>
@@ -159,7 +186,7 @@ function renderCorrectness(rows, label, nFiles, present) {
       </div>
       <p class="footnote">Popularity-weighted agreement with Shiki over ${nFiles} files in
         ${present.size} languages, renormalized over the languages present.</p>
-      ${renderAgreementTable(rows.find((r) => r.name === 'lex (ours)'), present, label)}
+      ${renderAgreementTable(rows.find((r) => r.name === 'lex-large (ours)') ?? rows.find((r) => r.name === 'lex-lite (ours)'), present, label)}
       <details>
         <summary>Per-language breakdown</summary>
         <div class="scroll">
@@ -169,7 +196,7 @@ function renderCorrectness(rows, label, nFiles, present) {
             </tr></thead>
             <tbody>
               ${langs.map((l) => `<tr${TOP25.includes(l) ? '' : ' class="tail"'}>
-                <td>${l}</td><td class="num">${pct(WEIGHTS[l])}</td>
+                <td>${l}</td><td class="num">${pct(weights[l])}</td>
                 ${rows.filter((r) => !r.reference)
                   .map((r) => `<td class="num">${r.perLang[l] === undefined ? '—' : pct(r.perLang[l])}</td>`).join('')}
               </tr>`).join('')}
@@ -271,9 +298,26 @@ async function runLatency() {
 // ---------------------------------------------------------------- page setup
 
 for (const c of RESULTS.corpora) {
-  renderCorrectness(c.rows, c.label, c.nFiles, new Set(c.present));
+  renderCorrectness(c.rows, c.label, c.nFiles, new Set(c.present), c.group ?? 'lite');
 }
 
+// ------------------------------------------------------------------- tabs
+
+const tabButtons = document.querySelectorAll('#corpus-tabs .tab-btn');
+function setActiveGroup(group) {
+  for (const btn of tabButtons) {
+    const active = btn.dataset.group === group;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', String(active));
+  }
+  for (const section of results.querySelectorAll('section[data-group]')) {
+    section.hidden = section.dataset.group !== group;
+  }
+}
+for (const btn of tabButtons) {
+  btn.addEventListener('click', () => setActiveGroup(btn.dataset.group));
+}
+setActiveGroup('lite');
 
 document.getElementById('run-latency').addEventListener('click', (e) => {
   e.target.disabled = true;

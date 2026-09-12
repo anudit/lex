@@ -173,6 +173,73 @@ export function makePrismAdapter(Prism, langMap) {
   };
 }
 
+// ------------------------------------------------------------- highlight.js
+
+// Mirrors train_large/label_encode_thread.mjs's own hljs -> nine-class mapping
+// exactly (same priority list, same substring-of-joined-kind-stack match,
+// same class ids), since that is what actually labeled every hljs-taught
+// language's training data. Scoring hljs against any other rubric would
+// compare it to a standard it was never asked to match.
+const HLJS_PRIORITY = [
+  ['comment', CLASS.comment], ['quote', CLASS.comment],
+  ['string', CLASS.string], ['regexp', CLASS.string], ['template-string', CLASS.string],
+  ['number', CLASS.number],
+  ['keyword', CLASS.keyword], ['meta-keyword', CLASS.keyword], ['selector-tag', CLASS.keyword],
+  ['type', CLASS.type], ['class', CLASS.type], ['built_in', CLASS.type],
+  ['title.function', CLASS.function], ['function', CLASS.function], ['title', CLASS.function],
+  ['literal', CLASS.constant], ['symbol', CLASS.constant], ['variable.constant', CLASS.constant],
+  ['operator', CLASS.operator], ['punctuation', CLASS.operator],
+];
+
+function hljsClass(stack) {
+  const joined = stack.join('.');
+  for (const [needle, value] of HLJS_PRIORITY) {
+    if (joined.includes(needle)) return value;
+  }
+  return PLAIN;
+}
+
+const isWs = (c) => c === 32 || c === 9 || c === 10 || c === 13;
+
+export function makeHljsAdapter(hljs) {
+  return {
+    name: 'highlight.js',
+    supports: (lang) => !!hljs.getLanguage(lang),
+    classes(code, lang) {
+      const out = new Uint8Array(code.length).fill(PLAIN);
+      const result = hljs.highlight(code, { language: lang, ignoreIllegals: true });
+      let pos = 0;
+      const visit = (node, stack) => {
+        if (typeof node === 'string') {
+          const cls = hljsClass(stack);
+          for (let i = 0; i < node.length; i++) {
+            if (!isWs(node.charCodeAt(i))) out[pos] = cls;
+            pos++;
+          }
+          return;
+        }
+        for (const child of node.children || []) {
+          // hljs 11 renamed the emitter's node kind to `scope` (`kind` was the
+          // v10 name) -- train_large/label_encode_thread.mjs still reads
+          // `node.kind` against hljs 11.12.0, so it silently gets `undefined`
+          // for every node and every hljs-taught training label collapses to
+          // plain. Worth fixing there too, but that's the training pipeline,
+          // out of scope for this demo adapter -- don't copy its mistake here.
+          visit(child, node.scope ? [...stack, node.scope] : stack);
+        }
+      };
+      visit(result._emitter.rootNode, []);
+      // hljs's own tree-walk output should reconstruct the source exactly (this
+      // is the same check train_large's labeling pipeline uses to discard a
+      // file rather than trust a desynced tree); throwing here is what makes
+      // measure() treat this file as an engine failure instead of silently
+      // scoring a shifted comparison.
+      if (pos !== code.length) throw new Error('hljs emitter length mismatch');
+      return out;
+    },
+  };
+}
+
 // ---------------------------------------------------------- span-based engines
 
 export function makeSpanAdapter(name, highlight, supports = () => true) {

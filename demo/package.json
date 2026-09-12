@@ -6,11 +6,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "capture": "echo \"with `bun run dev` running, open http://localhost:5173/capture.html \u2014 it writes src/results.json\""
+    "capture": "echo \"with `bun run dev` running, open http://localhost:5173/capture.html — it writes src/results.json\""
   },
   "dependencies": {
     "gpu-lexer": "^0.0.2",
+    "highlight.js": "^11.12.0",
     "lex": "file:../lex",
+    "lex-large": "file:../lex-large",
     "prismjs": "^1.30.0",
     "shiki": "^4.4.3",
     "sugar-high": "^2.3.1"

@@ -122,6 +122,41 @@ code { font-family: var(--mono); font-size: 0.95em; }
   margin: 30px 0 14px;
 }
 
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin: 30px 0 16px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0;
+}
+
+.tab-btn {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-bottom: none;
+  color: var(--dim);
+  cursor: pointer;
+  border-radius: 2px 2px 0 0;
+  transition: all 0.15s ease;
+}
+
+.tab-btn:hover {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tab-btn.active {
+  background: var(--box);
+  border-style: solid;
+  border-color: var(--line);
+  border-bottom: 2px solid var(--accent);
+  color: var(--ink);
+}
+
 button {
   font-family: var(--mono);
   font-size: 13px;

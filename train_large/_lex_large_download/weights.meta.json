@@ -1,0 +1,699 @@
+{
+  "format": "neural-lexer-v2",
+  "config": {
+    "dim": 96,
+    "embed_dim": 64,
+    "n_layers": 4,
+    "kernel_size": 5,
+    "head_hidden": 192,
+    "num_classes": 9,
+    "film_rank": 64,
+    "erase_rank": 16,
+    "dilations": [
+      1,
+      2,
+      4,
+      8
+    ]
+  },
+  "field_sizes": {
+    "kind": 4,
+    "len_bucket": 8,
+    "first_char": 128,
+    "last_char": 128,
+    "hash1": 1024,
+    "hash2": 256,
+    "trans_prev": 16,
+    "trans_next": 16,
+    "sym_prev": 32,
+    "sym_next": 32,
+    "paren_depth": 8,
+    "brace_depth": 8,
+    "bracket_depth": 8,
+    "line_pos": 8,
+    "indent_bucket": 8,
+    "quote_state": 4
+  },
+  "field_offsets": {
+    "kind": 0,
+    "len_bucket": 4,
+    "first_char": 12,
+    "last_char": 140,
+    "hash1": 268,
+    "hash2": 1292,
+    "trans_prev": 1548,
+    "trans_next": 1564,
+    "sym_prev": 1580,
+    "sym_next": 1612,
+    "paren_depth": 1644,
+    "brace_depth": 1652,
+    "bracket_depth": 1660,
+    "line_pos": 1668,
+    "indent_bucket": 1676,
+    "quote_state": 1684
+  },
+  "flag_offset": 1688,
+  "n_flag_bits": 8,
+  "plane_words": 20742,
+  "f16_count": 9700,
+  "plane_bytes": 82968,
+  "f16_bytes": 19400,
+  "total_bytes": 102368,
+  "parameters": 434602,
+  "tensors": {
+    "embedding.table": {
+      "kind": "embedding",
+      "bits": 3,
+      "shape": [
+        1696,
+        64
+      ],
+      "plane_offset": 0,
+      "plane_count": 10176,
+      "words_per_plane": 3392,
+      "words_per_row": 2,
+      "scale_offset": 0,
+      "scale_count": 17,
+      "group_sizes": [
+        4,
+        8,
+        128,
+        128,
+        1024,
+        256,
+        16,
+        16,
+        32,
+        32,
+        8,
+        8,
+        8,
+        8,
+        8,
+        4,
+        8
+      ]
+    },
+    "embedding.up": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        96,
+        64
+      ],
+      "plane_offset": 10176,
+      "plane_count": 192,
+      "words_per_plane": 192,
+      "words_per_row": 2,
+      "scale_offset": 17,
+      "scale_count": 96,
+      "bias_offset": 113,
+      "bias_count": 96
+    },
+    "film.down": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        64,
+        192
+      ],
+      "plane_offset": 10368,
+      "plane_count": 384,
+      "words_per_plane": 384,
+      "words_per_row": 6,
+      "scale_offset": 209,
+      "scale_count": 64,
+      "bias_offset": 273,
+      "bias_count": 64
+    },
+    "film.up": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        768,
+        64
+      ],
+      "plane_offset": 10752,
+      "plane_count": 1536,
+      "words_per_plane": 1536,
+      "words_per_row": 2,
+      "scale_offset": 337,
+      "scale_count": 768,
+      "bias_offset": 1105,
+      "bias_count": 768
+    },
+    "layers.0.dw": {
+      "kind": "linear",
+      "bits": 4,
+      "shape": [
+        96,
+        5
+      ],
+      "plane_offset": 12288,
+      "plane_count": 60,
+      "words_per_plane": 15,
+      "words_per_row": 0,
+      "scale_offset": 1873,
+      "scale_count": 96,
+      "bias_offset": 1969,
+      "bias_count": 96
+    },
+    "layers.0.proj_in": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        192,
+        96
+      ],
+      "plane_offset": 12348,
+      "plane_count": 576,
+      "words_per_plane": 576,
+      "words_per_row": 3,
+      "scale_offset": 2065,
+      "scale_count": 192,
+      "bias_offset": 2257,
+      "bias_count": 192
+    },
+    "layers.0.proj_out": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        96,
+        192
+      ],
+      "plane_offset": 12924,
+      "plane_count": 576,
+      "words_per_plane": 576,
+      "words_per_row": 6,
+      "scale_offset": 2449,
+      "scale_count": 96,
+      "bias_offset": 2545,
+      "bias_count": 96
+    },
+    "layers.0.erase_down": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        16,
+        96
+      ],
+      "plane_offset": 13500,
+      "plane_count": 48,
+      "words_per_plane": 48,
+      "words_per_row": 3,
+      "scale_offset": 2641,
+      "scale_count": 16,
+      "bias_offset": 2657,
+      "bias_count": 16
+    },
+    "layers.0.erase_up": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        192,
+        16
+      ],
+      "plane_offset": 13548,
+      "plane_count": 192,
+      "words_per_plane": 192,
+      "words_per_row": 1,
+      "scale_offset": 2673,
+      "scale_count": 192,
+      "bias_offset": 2865,
+      "bias_count": 192
+    },
+    "layers.1.dw": {
+      "kind": "linear",
+      "bits": 4,
+      "shape": [
+        96,
+        5
+      ],
+      "plane_offset": 13740,
+      "plane_count": 60,
+      "words_per_plane": 15,
+      "words_per_row": 0,
+      "scale_offset": 3057,
+      "scale_count": 96,
+      "bias_offset": 3153,
+      "bias_count": 96
+    },
+    "layers.1.proj_in": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        192,
+        96
+      ],
+      "plane_offset": 13800,
+      "plane_count": 576,
+      "words_per_plane": 576,
+      "words_per_row": 3,
+      "scale_offset": 3249,
+      "scale_count": 192,
+      "bias_offset": 3441,
+      "bias_count": 192
+    },
+    "layers.1.proj_out": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        96,
+        192
+      ],
+      "plane_offset": 14376,
+      "plane_count": 576,
+      "words_per_plane": 576,
+      "words_per_row": 6,
+      "scale_offset": 3633,
+      "scale_count": 96,
+      "bias_offset": 3729,
+      "bias_count": 96
+    },
+    "layers.1.erase_down": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        16,
+        96
+      ],
+      "plane_offset": 14952,
+      "plane_count": 48,
+      "words_per_plane": 48,
+      "words_per_row": 3,
+      "scale_offset": 3825,
+      "scale_count": 16,
+      "bias_offset": 3841,
+      "bias_count": 16
+    },
+    "layers.1.erase_up": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        192,
+        16
+      ],
+      "plane_offset": 15000,
+      "plane_count": 192,
+      "words_per_plane": 192,
+      "words_per_row": 1,
+      "scale_offset": 3857,
+      "scale_count": 192,
+      "bias_offset": 4049,
+      "bias_count": 192
+    },
+    "layers.2.dw": {
+      "kind": "linear",
+      "bits": 4,
+      "shape": [
+        96,
+        5
+      ],
+      "plane_offset": 15192,
+      "plane_count": 60,
+      "words_per_plane": 15,
+      "words_per_row": 0,
+      "scale_offset": 4241,
+      "scale_count": 96,
+      "bias_offset": 4337,
+      "bias_count": 96
+    },
+    "layers.2.proj_in": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        192,
+        96
+      ],
+      "plane_offset": 15252,
+      "plane_count": 576,
+      "words_per_plane": 576,
+      "words_per_row": 3,
+      "scale_offset": 4433,
+      "scale_count": 192,
+      "bias_offset": 4625,
+      "bias_count": 192
+    },
+    "layers.2.proj_out": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        96,
+        192
+      ],
+      "plane_offset": 15828,
+      "plane_count": 576,
+      "words_per_plane": 576,
+      "words_per_row": 6,
+      "scale_offset": 4817,
+      "scale_count": 96,
+      "bias_offset": 4913,
+      "bias_count": 96
+    },
+    "layers.2.erase_down": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        16,
+        96
+      ],
+      "plane_offset": 16404,
+      "plane_count": 48,
+      "words_per_plane": 48,
+      "words_per_row": 3,
+      "scale_offset": 5009,
+      "scale_count": 16,
+      "bias_offset": 5025,
+      "bias_count": 16
+    },
+    "layers.2.erase_up": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        192,
+        16
+      ],
+      "plane_offset": 16452,
+      "plane_count": 192,
+      "words_per_plane": 192,
+      "words_per_row": 1,
+      "scale_offset": 5041,
+      "scale_count": 192,
+      "bias_offset": 5233,
+      "bias_count": 192
+    },
+    "layers.3.dw": {
+      "kind": "linear",
+      "bits": 4,
+      "shape": [
+        96,
+        5
+      ],
+      "plane_offset": 16644,
+      "plane_count": 60,
+      "words_per_plane": 15,
+      "words_per_row": 0,
+      "scale_offset": 5425,
+      "scale_count": 96,
+      "bias_offset": 5521,
+      "bias_count": 96
+    },
+    "layers.3.proj_in": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        192,
+        96
+      ],
+      "plane_offset": 16704,
+      "plane_count": 576,
+      "words_per_plane": 576,
+      "words_per_row": 3,
+      "scale_offset": 5617,
+      "scale_count": 192,
+      "bias_offset": 5809,
+      "bias_count": 192
+    },
+    "layers.3.proj_out": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        96,
+        192
+      ],
+      "plane_offset": 17280,
+      "plane_count": 576,
+      "words_per_plane": 576,
+      "words_per_row": 6,
+      "scale_offset": 6001,
+      "scale_count": 96,
+      "bias_offset": 6097,
+      "bias_count": 96
+    },
+    "layers.3.erase_down": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        16,
+        96
+      ],
+      "plane_offset": 17856,
+      "plane_count": 48,
+      "words_per_plane": 48,
+      "words_per_row": 3,
+      "scale_offset": 6193,
+      "scale_count": 16,
+      "bias_offset": 6209,
+      "bias_count": 16
+    },
+    "layers.3.erase_up": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        192,
+        16
+      ],
+      "plane_offset": 17904,
+      "plane_count": 192,
+      "words_per_plane": 192,
+      "words_per_row": 1,
+      "scale_offset": 6225,
+      "scale_count": 192,
+      "bias_offset": 6417,
+      "bias_count": 192
+    },
+    "global_ctx.summary": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        96,
+        384
+      ],
+      "plane_offset": 18096,
+      "plane_count": 1152,
+      "words_per_plane": 1152,
+      "words_per_row": 12,
+      "scale_offset": 6609,
+      "scale_count": 96,
+      "bias_offset": 6705,
+      "bias_count": 96
+    },
+    "global_ctx.gate": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        96,
+        96
+      ],
+      "plane_offset": 19248,
+      "plane_count": 288,
+      "words_per_plane": 288,
+      "words_per_row": 3,
+      "scale_offset": 6801,
+      "scale_count": 96,
+      "bias_offset": 6897,
+      "bias_count": 96
+    },
+    "head_hidden": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        192,
+        192
+      ],
+      "plane_offset": 19536,
+      "plane_count": 1152,
+      "words_per_plane": 1152,
+      "words_per_row": 6,
+      "scale_offset": 6993,
+      "scale_count": 192,
+      "bias_offset": 7185,
+      "bias_count": 192
+    },
+    "head_out": {
+      "kind": "linear",
+      "bits": 1,
+      "shape": [
+        9,
+        192
+      ],
+      "plane_offset": 20688,
+      "plane_count": 54,
+      "words_per_plane": 54,
+      "words_per_row": 6,
+      "scale_offset": 7377,
+      "scale_count": 9,
+      "bias_offset": 7386,
+      "bias_count": 9
+    },
+    "highway_scale": {
+      "kind": "f16",
+      "shape": [
+        1
+      ],
+      "f16_offset": 7395,
+      "f16_count": 1
+    },
+    "film.strength": {
+      "kind": "f16",
+      "shape": [
+        4,
+        96
+      ],
+      "f16_offset": 7396,
+      "f16_count": 384
+    },
+    "film.norm.weight": {
+      "kind": "f16",
+      "shape": [
+        192
+      ],
+      "f16_offset": 7780,
+      "f16_count": 192
+    },
+    "layers.0.out_gate": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 7972,
+      "f16_count": 96
+    },
+    "layers.0.decay_f": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8068,
+      "f16_count": 96
+    },
+    "layers.0.decay_b": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8164,
+      "f16_count": 96
+    },
+    "layers.0.norm.weight": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8260,
+      "f16_count": 96
+    },
+    "layers.1.out_gate": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8356,
+      "f16_count": 96
+    },
+    "layers.1.decay_f": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8452,
+      "f16_count": 96
+    },
+    "layers.1.decay_b": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8548,
+      "f16_count": 96
+    },
+    "layers.1.norm.weight": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8644,
+      "f16_count": 96
+    },
+    "layers.2.out_gate": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8740,
+      "f16_count": 96
+    },
+    "layers.2.decay_f": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8836,
+      "f16_count": 96
+    },
+    "layers.2.decay_b": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 8932,
+      "f16_count": 96
+    },
+    "layers.2.norm.weight": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 9028,
+      "f16_count": 96
+    },
+    "layers.3.out_gate": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 9124,
+      "f16_count": 96
+    },
+    "layers.3.decay_f": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 9220,
+      "f16_count": 96
+    },
+    "layers.3.decay_b": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 9316,
+      "f16_count": 96
+    },
+    "layers.3.norm.weight": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 9412,
+      "f16_count": 96
+    },
+    "global_ctx.decl_gate": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 9508,
+      "f16_count": 96
+    },
+    "head_norm.weight": {
+      "kind": "f16",
+      "shape": [
+        96
+      ],
+      "f16_offset": 9604,
+      "f16_count": 96
+    }
+  }
+}

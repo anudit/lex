@@ -34,9 +34,18 @@ export default defineConfig({
   resolve: {
     alias: {
       lex: at('../lex/src/index.js'),
+      'lex-large': at('../lex-large/src/index.js'),
     },
   },
-  server: { fs: { allow: ['..'] } },
-  optimizeDeps: { exclude: ['lex'] },
+  server: {
+    fs: { allow: ['..'] },
+    // Without this, /__save-results's write to src/results.json triggers Vite's
+    // generic "unknown file changed" full-page reload -- and since capture.js
+    // runs measureAll() unconditionally on load, the freshly reloaded
+    // capture.html immediately starts a second, redundant multi-minute capture
+    // run, which finishes, writes results.json, reloads, and repeats forever.
+    watch: { ignored: ['**/src/results.json'] },
+  },
+  optimizeDeps: { exclude: ['lex', 'lex-large'] },
   build: { target: 'esnext', chunkSizeWarningLimit: 1200 },
 });

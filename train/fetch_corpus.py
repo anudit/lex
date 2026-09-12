@@ -12,6 +12,7 @@ Unified diffs cannot be harvested this way -- almost no repo checks in .diff fil
 from __future__ import annotations
 
 import argparse
+import http.client
 import io
 import json
 import os
@@ -180,7 +181,8 @@ def harvest_repo(lang: str, repo: str, out_dir: Path, budget: int,
                     files += 1
     except _BudgetReached:
         pass
-    except (urllib.error.URLError, tarfile.TarError, OSError, EOFError) as exc:
+    except (urllib.error.URLError, tarfile.TarError, OSError, EOFError,
+            http.client.HTTPException) as exc:
         print(f'    ! {repo}: {type(exc).__name__}: {exc}', file=sys.stderr)
     return written
 
