@@ -41,9 +41,31 @@ class RoundSTE(torch.autograd.Function):
         return grad * keep.to(grad.dtype), None
 
 
-def quantize(weight: torch.Tensor, bits: int, scale: torch.Tensor) -> torch.Tensor:
+class BinarySTE(torch.autograd.Function):
+    """Exact binary forward, clipped identity surrogate for latent weights.
+
+    The derived scale is deliberately detached in backward: its row-wide
+    gradient must not replace the independent learning signal for each weight.
+    The clipping interval is in latent-weight units, as in binary-weight QAT.
+    """
+
+    @staticmethod
+    def forward(ctx, weight, scale):
+        ctx.save_for_backward(weight)
+        return torch.where(weight >= 0, 1.0, -1.0) * scale
+
+    @staticmethod
+    def backward(ctx, grad):
+        (weight,) = ctx.saved_tensors
+        return grad * (weight.abs() <= 1).to(grad.dtype), None
+
+
+def quantize(weight: torch.Tensor, bits: int, scale: torch.Tensor,
+             binary_ste: bool = True) -> torch.Tensor:
     """Symmetric per-row k-bit quantization. bits=1 degenerates to sign(W) * scale."""
     if bits == 1:
+        if binary_ste:
+            return BinarySTE.apply(weight, scale)
         # sign(0) must not be 0: a zero weight has to pick a side, and the packed
         # format has no representation for it.
         q = torch.where(weight >= 0, 1.0, -1.0)
@@ -108,11 +130,13 @@ class QuantLinear(nn.Module):
         self.weight = nn.Parameter(torch.randn(out_features, in_features) * std)
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
         self.quant_enabled = True
+        self.binary_ste = True
 
     def effective(self) -> torch.Tensor:
         if not self.quant_enabled:
             return self.weight
-        return quantize(self.weight, self.bits, row_scale(self.weight, self.bits))
+        return quantize(self.weight, self.bits, row_scale(self.weight, self.bits),
+                        self.binary_ste)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.nn.functional.linear(x, self.effective(), self.bias)

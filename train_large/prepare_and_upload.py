@@ -1,4 +1,4 @@
-"""Resumably prepare all 193 languages and publish the finished cache."""
+"""Resumably prepare all 185 languages and publish the finished cache."""
 
 from __future__ import annotations
 

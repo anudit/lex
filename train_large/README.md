@@ -1,42 +1,60 @@
 # lex large training target
 
-This directory defines a separate approximately 100 KiB model covering every
+This directory defines a separate model with a 111,000-byte weight budget covering every
 canonical grammar bundled by Highlight.js 11.12.0. The checked-in manifest pins
-**193 grammars** from release commit
+**185 grammars** from release commit
 `f7f7d3803bd898e37c017ffb881317f0cde04a70`; aliases such as `html` remain covered
-by their canonical grammar (`xml`) and are not counted twice.
+by their canonical grammar (`xml`) and are not counted twice. Eight grammars
+(`erlang-repl`, `julia-repl`, `python-repl`, `clojure-repl`, `node-repl`,
+`php-template`, `xl`, `excel`) are excluded in `sync_languages.mjs` — the REPL
+variants and `php-template` are fetched through the exact same extension as a
+plain sibling grammar (`.erl`/`.jl`/`.py`/`.clj`/`.js`/`.php`), so their
+"corpus" is just relabelled sibling content, not real REPL transcripts or
+embedded HTML+PHP templates; `xl`'s own Highlight.js grammar mislabels 73-97%
+of every real `.xl` file as a comment regardless of content, a broken teacher
+rather than a data problem; `excel`'s only extension is `.xlsx`, a binary
+zip-based (OOXML) format that can never decode as UTF-8 source, so its corpus
+was structurally 0 tokens no matter how much was fetched.
 
 See [LOG_ANALYSIS.md](LOG_ANALYSIS.md) for the evidence behind the design.
 See [note.txt](note.txt) for the complete local dataset, Hugging Face, RTX
 training, evaluation, and export commands.
 
-## Shipping architecture
+## Default student architecture
 
 | component | configuration |
 | --- | --- |
 | hidden sequence width | 96 |
 | factorized embedding | 64 |
 | layers | 4 bidirectional selective BidiGLU blocks |
-| local context | depthwise kernel 5, dilations 1/2/4/8 |
+| local context | depthwise kernel 7, dilations 1/2/4/8 |
 | document conditioning | masked mean/max signature, FiLM rank 64 per layer |
-| recurrent reset | directional rank-16 input-conditioned erase |
+| recurrent reset | directional rank-32 input-conditioned erase |
 | classifier | 192-wide GELU head, 9 output classes |
 | lexical hashes | 1024 primary, 256 secondary |
 | structural inputs | paren/brace/bracket depth, line position, indent, quote state |
-| quantization | 3-bit embedding, 1-bit projections, 4-bit depthwise kernels |
-| exact packed weights | **102,368 bytes / 99.97 KiB** |
-| parameters | **434,602** |
+| quantization | 3-bit embedding/input projection, 2-bit hidden classifier, 3-bit output classifier, binary backbone, 4-bit depthwise kernels |
+| QAT gradients | clipped binary straight-through estimator; derived binary scales detached in backward |
+| exact packed weights | **110,352 bytes / 107.77 KiB** |
+| parameters | **453,866** |
 
 All matrix widths and ranks are multiples of 32, so packed rows do not waste a
 partial word. The extra budget is concentrated in shared representations rather
-than 193 language-specific heads. Language identity is inferred from the file
+than 185 language-specific heads. Language identity is inferred from the file
 signature and routed continuously through FiLM, preserving the API's no-language-
 argument behavior.
 
-The model and binary exporter are runnable now. The compact WGSL generator is
-specialized for width 64 and a 96-wide head, so promotion of this target also
-requires a generalized 96-wide WebGPU lowering and browser parity suite. A large
-checkpoint should not be copied into `lex/` until that parity work is complete.
+`wgsl_large.py` supports this configuration, including mixed-precision decoding
+and kernel 7. The MPS smoke screen selected this candidate at 66.84% weighted
+token accuracy, versus 66.36% for corrected gradients with the old architecture
+and 61.45% for the old gradient behavior. These are single-seed, 1,600-step
+supervised runs without distillation, not final model accuracy estimates.
+
+`NeuralLexer()` and `train.py` use the new student defaults. `LexerConfig()`
+retains historical fallback fields so older checkpoints that omit precision
+settings still load correctly; use `student_config()` for the new configuration.
+Resuming a checkpoint uses its stored architecture. Changing defaults does not
+replace the packaged weights; train and validate a new checkpoint before bundling.
 
 ## Data composition
 
@@ -51,7 +69,7 @@ The default target is **160 million labelled lexer tokens**. Allocation is exact
   generated/vendor filtering, content-hash file splits, and structural-window
   deduplication.
 - Compatible raw files from the completed compact run are hardlinked into the
-  large corpus and relabelled under the 193-language manifest. Aliases such as
+  large corpus and relabelled under the 185-language manifest. Aliases such as
   `shell` to `bash` and `html` to `xml` are mapped without duplicating disk data.
 - Aim for at least 12 repositories and 250 files per grammar. Sparse historical
   languages should use upstream compiler/library suites plus Highlight.js and
@@ -102,7 +120,13 @@ Train the unquantized teacher first:
   2>&1 | tee train_teacher.log
 ```
 
-Cache the teacher outputs once, then train the 99.97 KiB student. This avoids a
+The teacher remains fully unquantized: width 192, embedding width 96, four layers,
+384-wide head, FiLM rank 96, erase rank 32, and now kernel 7. Its weight budget is
+disabled. Its capacity has not been increased based on student smoke results.
+After retraining the teacher, regenerate its logits cache before training the
+student; an existing cache is not automatically refreshed when defaults change.
+
+Cache the teacher outputs once, then train the 110,352-byte student. This avoids a
 second teacher forward pass during every one of the 48 student epochs:
 
 ```bash
@@ -124,13 +148,13 @@ The student defaults to 48 epochs: six FP warmup epochs, 34 broadly tempered QAT
 epochs, and eight natural-calibration epochs. CUDA defaults are BF16 autocast,
 `torch.compile(mode="max-autotune")`, fused AdamW, pinned/prefetched input, and
 batch size 64 for a 16 GiB RTX 5060 Ti. The language auxiliary loss is reduced
-to 0.15 because a 193-way identity target otherwise overwhelms the token
+to 0.15 because a 185-way identity target otherwise overwhelms the token
 objective.
 
 ## Acceptance gates
 
-- Packed `weights.bin` is at most 100 KiB.
-- All 193 grammars have train, validation, and test data with at least 300k total
+- Packed `weights.bin` is at most 111,000 bytes.
+- All 185 grammars have train, validation, and test data with at least 300k total
   tokens before splitting.
 - Report popularity-weighted, macro-language, micro, and boundary metrics; do
   not hide an unsupported grammar inside the weighted aggregate.

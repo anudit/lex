@@ -147,10 +147,8 @@ struct Job {
 var<workgroup> tA  : array<f32, 3072>;   // TILE x max(DIM, HEAD_HIDDEN) = 16 x 192
 var<workgroup> tB  : array<f32, 3072>;   // TILE x 2*DIM = 16 x 192
 var<workgroup> tP  : array<f32, 1536>;   // TILE_POOL x 4*DIM = 4 x 384
-// Sized to DIM (96), not the 64-wide model's fixed 64: FILM_RANK (64) fits
-// inside it, and film()'s "threads past FILM_RANK write 0" branch runs for
-// every one of the 96 workgroup lanes.
-var<workgroup> red : array<f32, 96>;
+// Two slots per lane also accommodate the rank-128 FiLM candidate.
+var<workgroup> red : array<f32, 192>;
 var<workgroup> lg  : array<f32, 144>;    // TILE x NCLASS
 
 // WGSL's tanh is computed as (e^2x - 1)/(e^2x + 1) on some backends, so a
@@ -404,13 +402,14 @@ fn film(@builtin(local_invocation_id) lid: vec3<u32>,
     tA[d] = n0;
     tA[DIM + d] = n1;
     workgroupBarrier();
-    if (d < FILM_RANK) {
-        red[d] = tanh_s(fp[FD_BI + d] + fp[FD_S + d] * dotA192(
-            planes[FD_P + d * 6u], planes[FD_P + d * 6u + 1u],
-            planes[FD_P + d * 6u + 2u], planes[FD_P + d * 6u + 3u],
-            planes[FD_P + d * 6u + 4u], planes[FD_P + d * 6u + 5u], 0u));
-    } else {
-        red[d] = 0.0;
+    for (var r = d; r < 192u; r = r + 96u) {
+        red[r] = 0.0;
+        if (r < FILM_RANK) {
+            red[r] = tanh_s(fp[FD_BI + r] + fp[FD_S + r] * dotA192(
+                planes[FD_P + r * 6u], planes[FD_P + r * 6u + 1u],
+                planes[FD_P + r * 6u + 2u], planes[FD_P + r * 6u + 3u],
+                planes[FD_P + r * 6u + 4u], planes[FD_P + r * 6u + 5u], 0u));
+        }
     }
     workgroupBarrier();
 
@@ -644,7 +643,7 @@ fn l{L}_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let bg = fp[{PI_BI}u + DIM + d];
     let dbias = fp[{DW_BI}u + d];
     let dws = fp[{DW_S}u + d];
-    var dwv: array<f32, 5>;
+    var dwv: array<f32, KSIZE>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {{
         dwv[k] = wgt({DW_P}u, {DW_W}u, {DW_B}u, d * KSIZE + k, dws);
     }}
@@ -968,9 +967,43 @@ fn head(@builtin(local_invocation_id) lid: vec3<u32>,
 '''
 
 
+MIXED_DOTS = r'''
+fn dotQA(base: u32, wpp: u32, bits: u32, row: u32, act: u32, width: u32) -> f32 {
+    var value = 0.0;
+    for (var k = 0u; k < width; k = k + 1u) {
+        value = value + wgt(base, wpp, bits, row + k, 1.0) * tA[act + k];
+    }
+    return value;
+}
+fn dotQB(base: u32, wpp: u32, bits: u32, row: u32, act: u32, width: u32) -> f32 {
+    var value = 0.0;
+    for (var k = 0u; k < width; k = k + 1u) {
+        value = value + wgt(base, wpp, bits, row + k, 1.0) * tB[act + k];
+    }
+    return value;
+}
+fn dotQRed(base: u32, wpp: u32, bits: u32, row: u32, width: u32) -> f32 {
+    var value = 0.0;
+    for (var k = 0u; k < width; k = k + 1u) {
+        value = value + wgt(base, wpp, bits, row + k, 1.0) * red[k];
+    }
+    return value;
+}
+'''
+
+
 def generate(meta: dict) -> str:
     t = meta['tensors']
     cfg = meta['config']
+    if (cfg['dim'], cfg['embed_dim'], cfg['head_hidden']) != (96, 64, 192):
+        raise ValueError('large shader requires dim=96, embed_dim=64, head_hidden=192')
+    if not 0 < cfg['film_rank'] <= 192:
+        raise ValueError('large shader requires 0 < film_rank <= 192')
+    # These paths still use the optimized binary dot products below.
+    for name, entry in t.items():
+        if entry['kind'] == 'linear' and not name.endswith('.dw') and name not in (
+                'embedding.up', 'head_hidden', 'head_out') and entry['bits'] != 1:
+            raise ValueError(f'{name}: large shader currently requires binary projections')
     n = cfg['n_layers']
     dilations = cfg.get('dilations', (1, 2, 4))
     film_up = t['film.up']
@@ -981,12 +1014,31 @@ def generate(meta: dict) -> str:
         film_up_dot = ('dotRed64(planes[FU_P + o * 2u], '
                        'planes[FU_P + o * 2u + 1u])')
     else:
-        raise ValueError(f'unsupported FiLM up row width: {film_up_words} words')
+        film_up_dot = f'dotQRed(FU_P, FU_W, FU_B, o * {film_up_words * 32}u, FILM_RANK)'
     signature = SIGNATURE.replace('__FILM_UP_DOT__', film_up_dot)
+
+    # Keep the fast binary paths for existing artifacts; decode extra planes
+    # only for the explicitly mixed-precision input and classifier tensors.
+    embed = EMBED
+    head = POOL_HEAD
+    if 'group_sizes' not in t['embedding.table']:
+        embed = embed.replace('fp[EMB_S + f]', 'fp[EMB_S + row]')
+        embed = embed.replace('fp[EMB_S + NFIELD]', 'fp[EMB_S + FLAG_ROW + b]')
+    if t['embedding.up']['bits'] > 1:
+        embed = embed.replace('dotA64(up_w0, up_w1, j * EDIM)',
+                              'dotQA(UP_P, UP_W, UP_B, d * EDIM, j * EDIM, EDIM)')
+    if t['head_hidden']['bits'] > 1:
+        for idx in (0, 1):
+            head = head.replace(
+                f'dotB192(h{idx}a, h{idx}b, h{idx}c, h{idx}d, h{idx}e, h{idx}f, j * 2u * DIM)',
+                f'dotQB(HH_P, HH_W, HH_B, o{idx} * 2u * DIM, j * 2u * DIM, 2u * DIM)')
+    if t['head_out']['bits'] > 1:
+        head = head.replace('dotA192(ho0, ho1, ho2, ho3, ho4, ho5, j * HEAD_HIDDEN)',
+                            'dotQA(HO_P, HO_W, HO_B, d * HEAD_HIDDEN, j * HEAD_HIDDEN, HEAD_HIDDEN)')
 
     parts = ['// Generated by wgsl.py -- do not edit.\n'
              '// Multi-entry-point pipeline; see the module docstring for the split.\n',
-             _consts(meta), PRELUDE, EMBED, signature]
+             _consts(meta), PRELUDE, MIXED_DOTS, embed, signature]
     for i in range(n):
         if f'layers.{i}.erase_down' in t:
             scan_body = SCAN_SELECTIVE.format(
@@ -1038,7 +1090,7 @@ def generate(meta: dict) -> str:
         parts.append(POOL_REDUCE_STATIC)
 
     hw_term = 'fp[HW_F]' if 'highway_scale' in t else '0.0'
-    parts.append(POOL_HEAD.replace('__HW_TERM__', hw_term))
+    parts.append(head.replace('__HW_TERM__', hw_term))
     return '\n'.join(parts)
 
 

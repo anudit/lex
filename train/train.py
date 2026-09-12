@@ -11,7 +11,7 @@ Two things here are not standard boilerplate and matter for the result:
     tokens each; unweighted, the model can drop both entirely and still look
     fine on raw accuracy while producing visibly wrong highlighting.
 
-Quantization is annealed rather than switched on: a full-precision warmup finds
+Quantization starts after a full-precision warmup finds
 a good basin, then QAT sharpens the weights onto the grid. Flipping straight to
 1-bit from random init wastes most of the run recovering.
 
@@ -370,6 +370,17 @@ def main() -> None:
                     help='embedding table column width')
     ap.add_argument('--head-hidden', type=int, default=96,
                     help='classifier MLP hidden width')
+    ap.add_argument('--embed-bits', type=int, choices=(2, 3, 4), default=3)
+    ap.add_argument('--head-bits', type=int, choices=(1, 2, 3, 4), default=1)
+    ap.add_argument('--input-bits', type=int, choices=(1, 2, 3, 4), default=None)
+    ap.add_argument('--output-bits', type=int, choices=(1, 2, 3, 4), default=None)
+    ap.add_argument('--embedding-scale', choices=('field', 'row'), default='field')
+    ap.add_argument('--binary-ste', action=argparse.BooleanOptionalAction, default=True,
+                    help='disable only to reproduce the legacy gradient ablation')
+    ap.add_argument('--n-layers', type=int, default=None)
+    ap.add_argument('--kernel-size', type=int, choices=(3, 5, 7, 9), default=5)
+    ap.add_argument('--weight-budget', type=int, default=0,
+                    help='maximum packed student bytes; 0 disables the check')
     ap.add_argument('--resume', default='',
                     help='continue training an existing checkpoint (its own config wins '
                          'over --film-rank/--dim/--embed-dim/--head-hidden). Skips FP '
@@ -450,11 +461,20 @@ def main() -> None:
         model.load_state_dict(resume_ck['model_state_dict'])
         print(f">> resumed {args.resume} (was weighted {100 * resume_ck['weighted']:.2f}%)")
     else:
+        depth = args.n_layers or LexerConfig().n_layers
         model = NeuralLexer(LexerConfig(film_rank=args.film_rank, erase_rank=args.erase_rank,
                                         dim=args.dim,
                                         embed_dim=args.embed_dim,
-                                        head_hidden=args.head_hidden)).to(device)
+                                        head_hidden=args.head_hidden,
+                                        embed_bits=args.embed_bits, head_bits=args.head_bits,
+                                        input_bits=args.input_bits, output_bits=args.output_bits,
+                                        embedding_scale=args.embedding_scale,
+                                        binary_ste=args.binary_ste, n_layers=depth,
+                                        dilations=tuple(2 ** i for i in range(depth)),
+                                        kernel_size=args.kernel_size)).to(device)
     size = model.size_report()
+    if not args.full_precision and args.weight_budget and size['packed_bytes'] > args.weight_budget:
+        raise ValueError(f"packed weights {size['packed_bytes']} exceed budget {args.weight_budget}")
     print(f">> model: {size['total_parameters']:,} params, "
           f"{size['packed_kb']:.2f} KB packed (gpu-lexer: 41,321 params, 31.0 KB)")
 

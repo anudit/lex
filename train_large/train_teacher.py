@@ -21,7 +21,15 @@ DEFAULTS = (
     ('--head-hidden', '384'),
     ('--film-rank', '96'),
     ('--erase-rank', '32'),
+    ('--n-layers', '4'),
+    ('--kernel-size', '7'),
+    # Teacher is entirely FP; student bit allocation and byte cap do not apply.
+    ('--input-bits', '1'),
+    ('--head-bits', '1'),
+    ('--output-bits', '1'),
+    ('--weight-budget', '0'),
     ('--teacher-checkpoint', ''),
+    ('--teacher-logits', ''),
 )
 
 for flag, value in DEFAULTS:

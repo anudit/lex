@@ -22,7 +22,7 @@ def _rle_length(value: str) -> int:
 
 
 def main() -> None:
-    assert len(TARGET_LANGUAGES) == 193
+    assert len(TARGET_LANGUAGES) == 185
     assert abs(sum(weights().values()) - 1.0) < 1e-12
     budgets = token_budgets()
     assert sum(budgets.values()) == DEFAULT_TOTAL_TOKENS
@@ -37,7 +37,7 @@ def main() -> None:
         for key, value in arrays.items()
     }
     valid = torch.ones((1, len(tokens)), dtype=torch.bool)
-    model = NeuralLexer(LexerConfig())
+    model = NeuralLexer()
     model.set_quant(True)
     with torch.no_grad():
         logits = model(features, valid)
@@ -45,8 +45,8 @@ def main() -> None:
     assert torch.isfinite(logits).all()
 
     size = model.size_report()
-    assert size['packed_bytes'] == 102_368, size
-    assert size['packed_kb'] <= 100.0, size
+    assert size['packed_bytes'] == 110_352, size
+    assert size['packed_bytes'] <= 111_000, size
 
     # Import through the shared exporter to verify that the wider feature table
     # and all four layers are represented by the binary format.
@@ -81,7 +81,7 @@ def main() -> None:
         for path, encoded in rows:
             assert _rle_length(encoded) == len(Path(path).read_text())
 
-    print('PASS: 193 languages')
+    print('PASS: 185 languages')
     print(f'PASS: {sum(budgets.values()):,} tokens, floor {min(budgets.values()):,}')
     print(f'PASS: {size["total_parameters"]:,} params, {size["packed_kb"]:.2f} KiB')
     print(f'PASS: forward {tuple(logits.shape)} and export round-trip')

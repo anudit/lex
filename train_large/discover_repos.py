@@ -22,7 +22,7 @@ HERE = Path(__file__).resolve().parent
 RELATED_LINGUIST = {
     'arduino': 'C++', 'avrasm': 'Assembly', 'clojure-repl': 'Clojure',
     'crmsh': 'Shell', 'dts': 'Device Tree', 'dust': 'HTML',
-    'erlang-repl': 'Erlang', 'excel': 'VBA', 'irpf90': 'Fortran',
+    'erlang-repl': 'Erlang', 'irpf90': 'Fortran',
     'jboss-cli': 'Shell', 'leaf': 'HTML', 'mipsasm': 'Assembly',
     'mojolicious': 'Perl', 'n1ql': 'SQL', 'node-repl': 'JavaScript',
     'parser3': 'HTML', 'pgsql': 'PLpgSQL', 'php-template': 'PHP',
@@ -60,9 +60,16 @@ def search(language: str, limit: int, min_stars: int, token: str | None) -> list
 
 
 def search_extension(extension: str, limit: int, token: str) -> list[str]:
+    # GitHub's `extension:` qualifier only ever matches the final dot
+    # component, so a compound suffix like irpf90's sole extension `.irp.f`
+    # resolves to the near-useless `extension:f` (matches any Fortran .f
+    # file) unless the fuller suffix is also pinned as a path term.
     suffix = extension.rsplit('.', 1)[-1]
+    query = f'extension:{suffix}'
+    if extension.count('.') > 1:
+        query = f'{query} in:path "{extension.lstrip(".")}"'
     url = 'https://api.github.com/search/code?' + urllib.parse.urlencode({
-        'q': f'extension:{suffix}', 'per_page': min(100, limit * 4),
+        'q': query, 'per_page': min(100, limit * 4),
     })
     payload = _request(url, token)
     out = []
@@ -79,23 +86,52 @@ def search_extension(extension: str, limit: int, token: str) -> list[str]:
 
 
 def discover(language: str, limit: int, min_stars: int, token: str | None) -> list[str]:
-    """Use Linguist first, then extension search for sparse or mismatched names."""
+    """Extension code search first for languages Linguist does not track natively;
+    Linguist repo search first for everything else.
+
+    A RELATED_LINGUIST proxy (or no Linguist mapping at all) means repo-level
+    search can only ask for a *different*, broader language -- "language:HTML"
+    for `leaf`, "language:Shell" for `crmsh` -- and GitHub happily fills the
+    quota with generic top-starred repos in that proxy language, essentially
+    none of which contain the target extension. Measured directly: leaf, dust,
+    and parser3 (proxy "HTML") all resolved to the same five markdown-heavy
+    "awesome list" repos; jboss-cli, crmsh, and profile (proxy "Shell")
+    resolved to ohmyzsh/d3/superpowers. None of those repos hold a single file
+    the fetcher can use, so the language ends up starved even though 24
+    "repos" were nominally discovered. Code search by the pinned extension
+    finds files directly and is precision-first for exactly this case, so it
+    runs before the proxy search rather than as a fallback after the proxy
+    search has already spent the quota on noise.
+    """
     meta = LANGUAGE_META[language]
-    linguist = meta.get('linguist') or RELATED_LINGUIST.get(language)
+    true_linguist = meta.get('linguist')
+    proxy_linguist = RELATED_LINGUIST.get(language)
     found: list[str] = []
-    if linguist:
+
+    if not true_linguist and token:
+        for extension in meta.get('extensions', ()):
+            found.extend(search_extension(extension, limit, token))
+            if len(set(found)) >= limit:
+                break
+            time.sleep(6.2)
+
+    linguist = true_linguist or proxy_linguist
+    if linguist and len(set(found)) < limit:
         found.extend(search(linguist, limit, min_stars, token))
-        if len(found) < limit and min_stars > 0:
+        if len(set(found)) < limit and min_stars > 0:
             found.extend(search(linguist, limit, 0, token))
-    if token and len(set(found)) < limit:
-        # GitHub and Linguist occasionally disagree on a display name (for
-        # example Fortran Free Form). Code search by pinned extension recovers
-        # those repositories, at a lower API limit, so use it only as fallback.
+
+    if token and true_linguist and len(set(found)) < limit:
+        # Real Linguist language, still short of quota: GitHub and Linguist
+        # occasionally disagree on a display name (for example Fortran Free
+        # Form). Code search by pinned extension recovers those repositories,
+        # at a lower API limit, so it stays a fallback here.
         for extension in meta.get('extensions', ())[:3]:
             found.extend(search_extension(extension, limit, token))
             if len(set(found)) >= limit:
                 break
             time.sleep(6.2)
+
     return list(dict.fromkeys(found))[:limit]
 
 

@@ -39,7 +39,7 @@ BUDGET_EXPONENT = 0.5
 
 
 def weights() -> dict[str, float]:
-    """75% usage proxy plus 25% uniform coverage, normalized over 193 grammars."""
+    """75% usage proxy plus 25% uniform coverage, normalized over 185 grammars."""
     natural = {lang: POPULARITY.get(lang, 0.05) for lang in TARGET_LANGUAGES}
     total = sum(natural.values())
     n = len(TARGET_LANGUAGES)

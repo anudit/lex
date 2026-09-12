@@ -83,12 +83,16 @@ export function tokenize(text) {
     let f = lineStart ? 16 : 0;
     const first = charBucket(c);
     let last = first;
+    let wordLength = 0;
 
     if (kind === 0) {
       let a = 2166136261 >>> 0;
       let b = 2654435769 >>> 0;
       while (pos < n && isWord(text.charCodeAt(pos))) {
-        const cb = charBucket(text.charCodeAt(pos));
+        // Python hashes Unicode code points. Keep offsets in UTF-16 units for
+        // JS slicing, but count/hash a surrogate pair only once.
+        const cp = text.codePointAt(pos);
+        const cb = charBucket(cp);
         last = cb;
         a = Math.imul(a ^ cb, 16777619) >>> 0;
         b = Math.imul(b ^ cb, 2246822519) >>> 0;
@@ -96,7 +100,8 @@ export function tokenize(text) {
         else if (cb >= 65 && cb <= 90) f |= 2;
         else if (cb >= 48 && cb <= 57) f |= 4;
         else if (cb === 95) f |= 8;
-        pos++;
+        pos += cp > 0xffff ? 2 : 1;
+        wordLength++;
       }
       // Wider than lex's &511/&127: lex-large's embedding table has 1024/256
       // rows for these two fields (see field_sizes in weights.meta.json).
@@ -126,7 +131,7 @@ export function tokenize(text) {
     kinds[count] = kind;
     firstC[count] = first;
     lastC[count] = last;
-    lenB[count] = lenBucket(pos - start);
+    lenB[count] = lenBucket(kind === 0 ? wordLength : pos - start);
     flags[count] = f;
     count++;
 
@@ -200,8 +205,8 @@ export function tokenize(text) {
   }
 
   // Pack into the three-word layout the shader reads. Keeping the packing here
-  // means the GPU never does field arithmetic it can avoid. Words 0 and 1 are
-  // bit-for-bit lex's own layout; word 2 is new, carrying only the six
+  // means the GPU never does field arithmetic it can avoid. Word 0 retains
+  // lex's layout; word 1 widens hash2, and word 2 carries the six
   // structural fields (17 of its 32 bits used).
   const packed = new Uint32Array(count * 3);
   for (let i = 0; i < count; i++) {

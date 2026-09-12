@@ -70,7 +70,7 @@ def main() -> None:
         raise SystemExit('no files to label')
 
     # Keep each grammar in one shard. This loads each Shiki grammar once rather
-    # than loading nearly all 193 grammars into every worker.
+    # than loading nearly all 185 grammars into every worker.
     buckets: list[list[dict]] = [[] for _ in range(min(args.shards, len(by_language)))]
     loads = [0] * len(buckets)
     for _, entries in sorted(by_language.items(), key=lambda item: -len(item[1])):

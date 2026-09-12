@@ -1,0 +1,35 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Architecture export parity</title>
+<pre id="out">Running…</pre>
+<script type="module">
+import { LexRuntime } from '../lex-large/src/runtime.js';
+import { tokenize } from '../lex-large/src/tokenizer.js';
+const out = document.getElementById('out');
+const base = new URLSearchParams(location.search).get('fixtures');
+const results = [];
+try {
+  if (!base) throw new Error('Missing fixtures query parameter');
+  const suite = await (await fetch(`${base}/suite.json`)).json();
+  for (const candidate of suite) {
+    const shader = await (await fetch(`${base}/${candidate.name}/shader.wgsl`)).text();
+    const runtime = await LexRuntime.create({shader, planes: new Uint32Array(candidate.planes),
+      fp: new Float32Array(candidate.fp), steps: candidate.steps, dim:96});
+    let mismatches=0, maxEmbeddingError=0, tokens=0;
+    for (const c of candidate.cases) {
+      const t = tokenize(c.code);
+      const emb = await runtime.classify(t.packed,t.count,1);
+      for(let i=0;i<emb.length;i++) maxEmbeddingError=Math.max(maxEmbeddingError,Math.abs(emb[i]-c.embedding[i]));
+      const classes = await runtime.classify(t.packed,t.count);
+      if(classes.length!==c.classes.length) throw new Error('Token count mismatch');
+      mismatches += classes.reduce((n,v,i)=>n+Number(v!==c.classes[i]),0);
+      tokens += classes.length;
+    }
+    results.push({name:candidate.name,mismatches,tokens,maxEmbeddingError});
+    out.textContent=JSON.stringify(results,null,2);
+    runtime.destroy();
+  }
+  window.__result={ok:results.every(r=>r.mismatches===0 && r.maxEmbeddingError<0.001),results};
+} catch(error) { window.__result={ok:false,error:String(error.stack ?? error),results}; }
+out.textContent=JSON.stringify(window.__result,null,2);
+</script>

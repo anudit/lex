@@ -1,4 +1,4 @@
-"""The approximately 100 KiB, 193-language neural lexer architecture.
+"""The sub-111 KB, 185-language neural lexer architecture.
 
 The proven quantized blocks live in ../train/model.py. This module gives them a
 larger, word-aligned configuration and extends the language-agnostic feature
@@ -44,7 +44,11 @@ _base.FIELD_SIZES = FIELD_SIZES
 
 @dataclass
 class LexerConfig(_base.LexerConfig):
-    """Shipping student configuration: exactly 102,368 packed bytes."""
+    """Historical defaults for loading checkpoints with omitted bit settings.
+
+    New students use student_config(). Keep these fallback values stable so
+    older serialized configurations retain their original quantization math.
+    """
 
     dim: int = 96
     embed_dim: int = 64
@@ -55,9 +59,15 @@ class LexerConfig(_base.LexerConfig):
     erase_rank: int = 16
 
 
+def student_config() -> LexerConfig:
+    """Selected MPS smoke candidate: exactly 110,352 packed bytes."""
+    return LexerConfig(input_bits=3, head_bits=2, output_bits=3,
+                       erase_rank=32, kernel_size=7, binary_ste=True)
+
+
 class NeuralLexer(_base.NeuralLexer):
     def __init__(self, cfg: LexerConfig | None = None):
-        super().__init__(cfg or LexerConfig())
+        super().__init__(cfg or student_config())
 
 
 FeatureEmbedding = _base.FeatureEmbedding

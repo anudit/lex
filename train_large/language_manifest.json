@@ -1,16 +1,16 @@
 {
   "format": "lex-large-language-manifest-v1",
-  "generated": "2026-09-11T13:08:14.250Z",
+  "generated": "2026-09-12T06:13:17.352Z",
   "highlightJs": {
     "version": "11.12.0",
-    "canonicalGrammarCount": 193,
+    "canonicalGrammarCount": 185,
     "releaseCommit": "f7f7d3803bd898e37c017ffb881317f0cde04a70"
   },
   "shiki": {
     "version": "4.4.3"
   },
   "githubLinguist": {
-    "commit": "8b57fcfd3e082d8d369c0abd9b5f90f273cf865e"
+    "commit": "16cac170f73c97eb4e4329d66fcb341ef25ef4f0"
   },
   "languages": [
     {
@@ -554,20 +554,6 @@
       ]
     },
     {
-      "id": "clojure-repl",
-      "name": "Clojure REPL",
-      "aliases": [],
-      "teacher": {
-        "engine": "highlight.js",
-        "language": "clojure-repl"
-      },
-      "linguist": null,
-      "extensions": [
-        ".clj"
-      ],
-      "filenames": []
-    },
-    {
       "id": "cmake",
       "name": "CMake",
       "aliases": [
@@ -1065,37 +1051,6 @@
         "rebar.config.lock",
         "rebar.lock"
       ]
-    },
-    {
-      "id": "erlang-repl",
-      "name": "Erlang REPL",
-      "aliases": [],
-      "teacher": {
-        "engine": "highlight.js",
-        "language": "erlang-repl"
-      },
-      "linguist": null,
-      "extensions": [
-        ".erl"
-      ],
-      "filenames": []
-    },
-    {
-      "id": "excel",
-      "name": "Excel formulae",
-      "aliases": [
-        "xls",
-        "xlsx"
-      ],
-      "teacher": {
-        "engine": "highlight.js",
-        "language": "excel"
-      },
-      "linguist": null,
-      "extensions": [
-        ".xlsx"
-      ],
-      "filenames": []
     },
     {
       "id": "fix",
@@ -1737,22 +1692,6 @@
       "filenames": []
     },
     {
-      "id": "julia-repl",
-      "name": "Julia REPL",
-      "aliases": [
-        "jldoctest"
-      ],
-      "teacher": {
-        "engine": "highlight.js",
-        "language": "julia-repl"
-      },
-      "linguist": "Julia REPL",
-      "extensions": [
-        ".jl"
-      ],
-      "filenames": []
-    },
-    {
       "id": "kotlin",
       "name": "Kotlin",
       "aliases": [
@@ -2289,20 +2228,6 @@
       "filenames": []
     },
     {
-      "id": "node-repl",
-      "name": "Node REPL",
-      "aliases": [],
-      "teacher": {
-        "engine": "highlight.js",
-        "language": "node-repl"
-      },
-      "linguist": null,
-      "extensions": [
-        ".js"
-      ],
-      "filenames": []
-    },
-    {
       "id": "nsis",
       "name": "NSIS",
       "aliases": [],
@@ -2496,20 +2421,6 @@
         ".php_cs.dist",
         "Phakefile"
       ]
-    },
-    {
-      "id": "php-template",
-      "name": "PHP template",
-      "aliases": [],
-      "teacher": {
-        "engine": "highlight.js",
-        "language": "php-template"
-      },
-      "linguist": null,
-      "extensions": [
-        ".php"
-      ],
-      "filenames": []
     },
     {
       "id": "plaintext",
@@ -2746,22 +2657,6 @@
         "SConstruct",
         "wscript"
       ]
-    },
-    {
-      "id": "python-repl",
-      "name": "python-repl",
-      "aliases": [
-        "pycon"
-      ],
-      "teacher": {
-        "engine": "highlight.js",
-        "language": "python-repl"
-      },
-      "linguist": "Python console",
-      "extensions": [
-        ".py"
-      ],
-      "filenames": []
     },
     {
       "id": "q",
@@ -3572,22 +3467,6 @@
         ".nas",
         ".nasm",
         ".s"
-      ],
-      "filenames": []
-    },
-    {
-      "id": "xl",
-      "name": "XL",
-      "aliases": [
-        "tao"
-      ],
-      "teacher": {
-        "engine": "highlight.js",
-        "language": "xl"
-      },
-      "linguist": null,
-      "extensions": [
-        ".xl"
       ],
       "filenames": []
     },

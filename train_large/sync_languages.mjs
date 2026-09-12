@@ -1,4 +1,4 @@
-/** Build the pinned 193-language manifest from installed Highlight.js + Shiki. */
+/** Build the pinned 185-language manifest from installed Highlight.js + Shiki. */
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,11 +14,34 @@ const shikiPackage = JSON.parse(fs.readFileSync(
   path.join(here, 'node_modules/shiki/package.json'), 'utf8'));
 const languageDir = path.join(here, 'node_modules/highlight.js/lib/languages');
 
+// Excluded: each of these is fetched and labelled with the SAME extension as
+// a plain sibling grammar already in the manifest, so its "corpus" is just
+// duplicate or overlapping content under a second label the fetcher cannot
+// actually distinguish from the sibling's. Training measured this directly:
+// erlang-repl/julia-repl came out byte-identical in token count to
+// erlang/julia (same files, same content, two labels); python-repl,
+// clojure-repl and node-repl show the same pattern with '.py'/'.clj'/'.js'.
+// php-template is fetched via plain '.php' (a strict subset of php's own
+// extension list) so every file collected is an ordinary standalone PHP
+// file, not the embedded HTML+PHP markup the grammar exists to demarcate.
+// xl is dropped separately: highlight.js's own xl grammar mislabels 73-97%
+// of every real .xl source file as "comment" regardless of content (checked
+// against six files from c3d/xl and c3d/tao3D) -- the teacher itself is
+// broken for this grammar, not just under-resourced.
+// excel is dropped separately: its only extension is .xlsx, a binary
+// zip-based (OOXML) format, not text -- every fetched file necessarily fails
+// the pipeline's UTF-8 decode, so the corpus is structurally 0 tokens no
+// matter how much fetching is done. Confirmed after a full rebuild: 0/300k.
+const EXCLUDED_IDS = new Set([
+  'erlang-repl', 'julia-repl', 'python-repl', 'clojure-repl', 'node-repl',
+  'php-template', 'xl', 'excel',
+]);
+
 const ids = fs.readdirSync(languageDir)
   .filter((name) => name.endsWith('.js'))
   // The npm package ships both foo.js and foo.js.js module variants.
   .map((name) => name.replace(/(?:\.js)+$/, ''));
-const canonicalIds = [...new Set(ids)].sort();
+const canonicalIds = [...new Set(ids)].filter((id) => !EXCLUDED_IDS.has(id)).sort();
 
 const aliases = {
   bash: 'shellscript',
@@ -61,18 +84,18 @@ const linguistAliases = {
 const fallbackExtensions = {
   abnf: ['.abnf'], accesslog: ['.log'], apache: ['.conf'], bnf: ['.bnf'],
   arcade: ['.arcade'], arduino: ['.ino'], avrasm: ['.asm'], axapta: ['.xpp'],
-  brainfuck: ['.bf'], cal: ['.cl'], 'clojure-repl': ['.clj'], cos: ['.cls'],
+  brainfuck: ['.bf'], cal: ['.cl'], cos: ['.cls'],
   crmsh: ['.crm'], csp: ['.csp'], dts: ['.dts'], dust: ['.dust'], fix: ['.fix'],
   django: ['.html'], dns: ['.zone'], dsconfig: ['.conf'],
-  'erlang-repl': ['.erl'], excel: ['.xlsx'], freedesktop: ['.desktop'],
+  freedesktop: ['.desktop'],
   gauss: ['.gss'], gcode: ['.gcode'], gml: ['.gml'], hsp: ['.hsp'],
   http: ['.http'], ini: ['.ini'], irpf90: ['.irp.f'], isbl: ['.q'],
-  'jboss-cli': ['.cli'], 'julia-repl': ['.jl'], ldif: ['.ldif'], leaf: ['.leaf'],
+  'jboss-cli': ['.cli'], ldif: ['.ldif'], leaf: ['.leaf'],
   livecodeserver: ['.lcs'], maxima: ['.mac'], mel: ['.mel'], mipsasm: ['.s'],
   mizar: ['.miz'], mojolicious: ['.ep'], n1ql: ['.n1ql'], nestedtext: ['.nt'],
-  'node-repl': ['.js'], 'php-template': ['.php'], plaintext: ['.txt'],
+  plaintext: ['.txt'],
   parser3: ['.p'], pf: ['.conf'], pgsql: ['.sql'], profile: ['.profile'],
-  properties: ['.properties'], 'python-repl': ['.py'], reasonml: ['.re'],
+  properties: ['.properties'], reasonml: ['.re'],
   rib: ['.rib'], roboconf: ['.graph'], routeros: ['.rsc'], rsl: ['.rsl'],
   ruleslanguage: ['.rule'], shell: ['.sh'], step21: ['.p21'],
   subunit: ['.subunit'], taggerscript: ['.tag'], tap: ['.tap'], tp: ['.tp'],

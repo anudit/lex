@@ -70,6 +70,10 @@ class LexerConfig:
     embed_bits: int = 3
     proj_bits: int = 1
     head_bits: int = 1
+    input_bits: int | None = None
+    output_bits: int | None = None
+    embedding_scale: str = 'field'
+    binary_ste: bool = True
     conv_bits: int = 4
     kernel_size: int = 5
     n_layers: int = 3
@@ -163,9 +167,12 @@ class FeatureEmbedding(nn.Module):
         for gi, (name, size) in enumerate(FIELD_SIZES.items()):
             group_ids[offsets[name]:offsets[name] + size] = gi
         group_ids[self.flag_offset:] = len(FIELD_SIZES)
+        if cfg.embedding_scale not in ('field', 'row'):
+            raise ValueError('embedding_scale must be field or row')
         self.table = QuantEmbedding(offset, cfg.embed_dim, bits=cfg.embed_bits,
-                                    groups=group_ids)
-        self.up = QuantLinear(cfg.embed_dim, cfg.dim, bits=cfg.proj_bits, bias=True)
+                                    groups=group_ids if cfg.embedding_scale == 'field' else None)
+        self.up = QuantLinear(cfg.embed_dim, cfg.dim,
+                              bits=cfg.input_bits or cfg.proj_bits, bias=True)
         self.register_buffer('_flag_ids',
                              torch.arange(N_FLAG_BITS) + self.flag_offset,
                              persistent=False)
@@ -372,7 +379,11 @@ class NeuralLexer(nn.Module):
         self.head_norm = nn.RMSNorm(c.dim)
         self.highway_scale = nn.Parameter(torch.zeros(1)) if getattr(c, 'use_highway', False) else None
         self.head_hidden = QuantLinear(c.dim * 2, c.head_hidden, bits=c.head_bits)
-        self.head_out = QuantLinear(c.head_hidden, c.num_classes, bits=c.head_bits)
+        self.head_out = QuantLinear(c.head_hidden, c.num_classes,
+                                    bits=c.output_bits or c.head_bits)
+        for module in self.modules():
+            if isinstance(module, QuantLinear):
+                module.binary_ste = c.binary_ste
 
     def forward(self, feats: dict[str, torch.Tensor],
                 valid: torch.Tensor | None = None,

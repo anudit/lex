@@ -21,6 +21,7 @@ Offsets in the metadata are in units of the respective element type.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 import os
 from pathlib import Path
 
@@ -126,6 +127,7 @@ def export_model(model: NeuralLexer, out_dir: str, verify: bool = True) -> dict:
     meta = {
         'format': 'neural-lexer-v2',
         'config': {
+            **asdict(cfg),
             'dim': cfg.dim, 'embed_dim': cfg.embed_dim, 'n_layers': cfg.n_layers,
             'kernel_size': cfg.kernel_size, 'head_hidden': cfg.head_hidden,
             'num_classes': cfg.num_classes,

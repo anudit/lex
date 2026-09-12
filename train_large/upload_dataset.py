@@ -10,6 +10,8 @@ from pathlib import Path
 
 from huggingface_hub import HfApi
 
+from languages import TARGET_LANGUAGES
+
 HERE = Path(__file__).resolve().parent
 
 
@@ -33,7 +35,7 @@ tags:
 
 # lex-large
 
-Prepared numeric training cache for the 99.97 KiB, 193-grammar neural lexer.
+Prepared numeric training cache for the 99.97 KiB, {len(TARGET_LANGUAGES)}-grammar neural lexer.
 It contains token features and nine-class syntax labels, not the original source
 text. File-level hashing fixes the train/validation/test split before upload.
 
@@ -47,7 +49,7 @@ text. File-level hashing fixes the train/validation/test split before upload.
 
 Total labelled tokens: {meta.get('total_tokens', 0):,}
 
-Languages covered: {meta.get('languages_covered', 0)}/{meta.get('languages_target', 193)}
+Languages covered: {meta.get('languages_covered', 0)}/{meta.get('languages_target', len(TARGET_LANGUAGES))}
 
 Sequence length: {meta.get('seq_len', 512)}
 
@@ -77,8 +79,8 @@ def main() -> None:
     parser.add_argument('--private', action='store_true')
     parser.add_argument('--workers', type=int, default=4)
     parser.add_argument('--allow-underfilled', action='store_true',
-                        help='skip the 193-language / 95%%-of-target-tokens checks, '
-                             'for a smoke-test upload of a known-underfilled cache')
+                        help=f'skip the {len(TARGET_LANGUAGES)}-language / 95%%-of-target-tokens '
+                             'checks, for a smoke-test upload of a known-underfilled cache')
     args = parser.parse_args()
 
     folder = Path(args.folder).resolve()
@@ -89,8 +91,10 @@ def main() -> None:
         raise SystemExit(f'dataset cache is incomplete: {", ".join(missing)}')
 
     meta = json.loads(meta_path.read_text())
-    if meta.get('languages_covered') != 193 and not args.allow_underfilled:
-        raise SystemExit(f'expected 193 covered languages, found {meta.get("languages_covered")}')
+    if meta.get('languages_covered') != len(TARGET_LANGUAGES) and not args.allow_underfilled:
+        raise SystemExit(
+            f'expected {len(TARGET_LANGUAGES)} covered languages, '
+            f'found {meta.get("languages_covered")}')
     if (meta.get('total_tokens', 0) < int(meta.get('total_tokens_requested', 160_000_000) * 0.95)
             and not args.allow_underfilled):
         raise SystemExit('dataset is below 95 percent of its requested token count')

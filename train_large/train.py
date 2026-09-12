@@ -1,4 +1,4 @@
-"""Opinionated entry point for the 99.97 KiB student.
+"""Opinionated entry point for the 110,352-byte mixed-precision student.
 
 All flags remain overridable. Defaults are inserted only when the caller did
 not provide that flag, so this stays compatible with ../train/train.py.
@@ -21,7 +21,7 @@ def _has(flag: str) -> bool:
 
 
 def _default(flag: str, value: str | None = None) -> None:
-    if _has(flag):
+    if _has(flag) or (value is None and _has('--no-' + flag.removeprefix('--'))):
         return
     sys.argv.append(flag)
     if value is not None:
@@ -29,6 +29,8 @@ def _default(flag: str, value: str | None = None) -> None:
 
 
 def main() -> None:
+    from model import student_config
+    student = student_config()
     defaults = {
         '--dataset': './corpus/dataset',
         '--total-tokens': '160000000',
@@ -46,7 +48,13 @@ def main() -> None:
         '--embed-dim': '64',
         '--head-hidden': '192',
         '--film-rank': '64',
-        '--erase-rank': '16',
+        '--erase-rank': str(student.erase_rank),
+        '--n-layers': str(student.n_layers),
+        '--kernel-size': str(student.kernel_size),
+        '--embed-bits': str(student.embed_bits),
+        '--head-bits': str(student.head_bits),
+        '--input-bits': str(student.input_bits),
+        '--output-bits': str(student.output_bits),
         '--sampler': 'tempered',
         '--sampling-exponent': '0.5',
         '--tail-floor': '0.00025',
@@ -56,6 +64,7 @@ def main() -> None:
         '--lang-loss': '0.15',
         '--struct-loss': '0.2',
         '--seed': '20260911',
+        '--weight-budget': '111000',
         # The old external set covers only 57 languages. An empty root makes the
         # 75/25 popularity/coverage validation score select this checkpoint.
         '--real-bench-root': '',
@@ -63,6 +72,7 @@ def main() -> None:
     for flag, value in defaults.items():
         _default(flag, value)
     _default('--mine-weak-languages')
+    _default('--binary-ste')
     _default('--pin-memory')
     _default('--fused-optimizer')
 
