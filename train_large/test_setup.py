@@ -80,12 +80,22 @@ def main() -> None:
         assert len(rows) == 2
         for path, encoded in rows:
             assert _rle_length(encoded) == len(Path(path).read_text())
+        encoded_by_language = {
+            Path(path).stem: encoded for path, encoded in rows
+        }
+        # Highlight.js 11 emitter nodes expose `scope`, not `kind`. Exact
+        # length alone would let an all-PLAIN label stream pass unnoticed.
+        highlight_rle = encoded_by_language['abnf']
+        assert any(
+            run.split(':', 1)[0] not in {'0', '9'}
+            for run in highlight_rle.split(',')
+        ), highlight_rle
 
     print('PASS: 185 languages')
     print(f'PASS: {sum(budgets.values()):,} tokens, floor {min(budgets.values()):,}')
     print(f'PASS: {size["total_parameters"]:,} params, {size["packed_kb"]:.2f} KiB')
     print(f'PASS: forward {tuple(logits.shape)} and export round-trip')
-    print('PASS: exact-length Shiki and Highlight.js labels')
+    print('PASS: exact-length Shiki and semantic Highlight.js labels')
 
 
 if __name__ == '__main__':

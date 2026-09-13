@@ -1,6 +1,6 @@
 # lex-large
 
-Syntax highlighting from a 99.97 KiB neural model running on WebGPU, covering
+Syntax highlighting from a 106.77 KiB neural model running on WebGPU, covering
 193 Highlight.js grammars. This is the larger sibling of
 [`lex`](../lex) (36.15 KiB, 52 languages, referred to as **lex-lite** where the
 two are compared) -- same API, same zero-dependency, no-grammar approach, more
@@ -39,13 +39,16 @@ Same architecture family as `lex` -- no grammar, a CPU pre-tokenizer, a small
 recurrent model reading sparse per-token features and a pooled document
 signature that FiLM-modulates every layer -- just wider: 96-dim hidden state
 (vs. 64), 64-dim embedding (vs. 32), 192-wide classifier head (vs. 96), and
-four recurrent layers with dilations 1/2/4/8 (vs. three layers at 1/2/4). It
+four recurrent layers with kernel-7 depthwise convs at dilations 1/2/4/8 (vs.
+three kernel-5 layers at 1/2/4). It
 was trained on a 193-language target set (`train_large/`) rather than `lex`'s
 52-language primary set, so it covers most of the Highlight.js grammar list
 rather than the top of it.
 
-The model has 434,602 parameters, quantized the same way as `lex` (3 bits for
-the embedding table, 1 bit for projections, 4 bits for the depthwise kernels).
+The model has 435,370 parameters (109,328 bytes packed), quantized with mixed
+precision: 3 bits for the embedding table and input projection, 1 bit for the
+backbone projections, 4 bits for the depthwise kernels, and 2/3 bits for the
+classifier's hidden/output layers.
 It ships inline with no model fetch.
 
 ## WebGPU shader

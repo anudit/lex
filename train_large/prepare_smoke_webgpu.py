@@ -22,6 +22,9 @@ def main():
     suite = []
     for checkpoint in sorted(args.checkpoints.glob('*.pt')):
         ck = torch.load(checkpoint, map_location='cpu', weights_only=False)
+        if ck.get('requires_research_loader'):
+            print(f'Skipping {checkpoint.name}: experimental inference graph')
+            continue
         model = NeuralLexer(LexerConfig(**ck['config'])).eval()
         model.load_state_dict(ck['model_state_dict'])
         target = args.out / checkpoint.stem

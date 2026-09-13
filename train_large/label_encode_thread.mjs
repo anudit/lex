@@ -96,7 +96,10 @@ function encodeHighlight(code, language) {
       for (const char of node) classes.push(/\s/.test(char) ? MASK : cls);
       return;
     }
-    const next = node.kind ? [...stack, node.kind] : stack;
+    // Highlight.js 11 renamed emitter nodes' `kind` field to `scope`.
+    // Keep the fallback for older emitters, but prefer the current field.
+    const scope = node.scope || node.kind;
+    const next = scope ? [...stack, scope] : stack;
     for (const child of node.children || []) visit(child, next);
   };
   visit(result._emitter.rootNode);

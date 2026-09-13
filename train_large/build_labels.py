@@ -48,6 +48,12 @@ def main() -> None:
                 or list(TARGET_LANGUAGES))
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Shard names depend on the selected languages and shard count. Leaving
+    # files from an older run here makes build_dataset.py ingest both schemas.
+    for stale in out_dir.glob('labels.*.tsv'):
+        stale.unlink()
+    for stale in out_dir.glob('manifest.*.jsonl'):
+        stale.unlink()
 
     by_language: dict[str, list[dict]] = {}
     for language in selected:

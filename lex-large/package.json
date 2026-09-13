@@ -1,7 +1,7 @@
 {
   "name": "lex-large",
   "version": "0.1.0",
-  "description": "Language-agnostic syntax highlighting from a 99.97 KiB neural model running on WebGPU, covering 193 Highlight.js grammars",
+  "description": "Language-agnostic syntax highlighting from a 106.77 KiB neural model running on WebGPU, covering 193 Highlight.js grammars",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,

@@ -220,11 +220,7 @@ export function makeHljsAdapter(hljs) {
         }
         for (const child of node.children || []) {
           // hljs 11 renamed the emitter's node kind to `scope` (`kind` was the
-          // v10 name) -- train_large/label_encode_thread.mjs still reads
-          // `node.kind` against hljs 11.12.0, so it silently gets `undefined`
-          // for every node and every hljs-taught training label collapses to
-          // plain. Worth fixing there too, but that's the training pipeline,
-          // out of scope for this demo adapter -- don't copy its mistake here.
+          // v10 name); train_large/label_encode_thread.mjs reads it the same way.
           visit(child, node.scope ? [...stack, node.scope] : stack);
         }
       };

@@ -175,7 +175,7 @@ export const PRISM_LANG = {
 
 export async function boot(onStatus = () => {}) {
   onStatus('loading engines…');
-  // CORPUS_LARGE draws from train_large's 193-grammar target set, whose
+  // CORPUS_LARGE draws from train_large's 185-grammar target set, whose
   // shiki_id() falls back to the raw Highlight.js id for languages Shiki
   // doesn't actually bundle (mizar, rib, step21, ...) -- passing an unknown
   // id to createHighlighter throws, so only request ids Shiki really has.
@@ -216,17 +216,24 @@ export async function measure(adapters, corpus, label, onStatus = () => {}, opts
   const excluded = new Set(opts.excluded ?? EXCLUDED);
   corpus = corpus.filter((item) => !excluded.has(item.lang));
   const ref = adapters.find((a) => a.reference);
+  // Grammars Shiki doesn't bundle were labelled by Highlight.js during training
+  // (`teacher` in corpus_large.js), so they are scored against it -- through the
+  // same nine-class mapping -- instead of being skipped. highlight.js itself is
+  // not scored on those files, since it would be grading its own output.
+  const hljsRef = adapters.find((a) => a.name === 'highlight.js') ?? makeHljsAdapter(hljs);
   const others = adapters.filter((a) => !a.reference);
   const tally = new Map(others.map((a) => [a.name, new Map()]));
 
   for (let i = 0; i < corpus.length; i++) {
-    const { code, lang, shikiLang } = corpus[i];
+    const { code, lang, shikiLang, teacher } = corpus[i];
     if (i % 10 === 0) onStatus(`${label} — ${i}/${corpus.length} files`);
+    const hljsTaught = teacher === 'highlight.js';
     let refCls;
     try {
-      refCls = ref.classes(code, shikiLang);
+      refCls = hljsTaught ? hljsRef.classes(code, lang) : ref.classes(code, shikiLang);
     } catch { continue; }
     for (const a of others) {
+      if (hljsTaught && a.name === hljsRef.name) continue;
       const t = tally.get(a.name);
       if (!t.has(lang)) t.set(lang, { hit: 0, total: 0 });
       const bucket = t.get(lang);
@@ -242,8 +249,11 @@ export async function measure(adapters, corpus, label, onStatus = () => {}, opts
   }
 
   const present = [...new Set(corpus.map((c) => c.lang))];
-  const wsum = present.reduce((acc, l) => acc + (weights[l] ?? 0), 0);
-  const rows = [{ name: 'Shiki', weighted: 1, micro: 1, reference: true, perLang: {} }];
+  const hljsTaught = corpus.some((c) => c.teacher === 'highlight.js');
+  const rows = [{
+    name: hljsTaught ? 'Shiki / hljs teacher' : 'Shiki',
+    weighted: 1, micro: 1, reference: true, perLang: {},
+  }];
   for (const a of others) {
     const perLang = {};
     let hit = 0;
@@ -253,8 +263,14 @@ export async function measure(adapters, corpus, label, onStatus = () => {}, opts
       hit += b.hit;
       total += b.total;
     }
-    const weighted = present
-      .reduce((acc, l) => acc + (weights[l] ?? 0) * (perLang[l] ?? 0), 0) / wsum;
+    // Renormalize over the languages this engine was actually scored on. A
+    // language whose reference failed on every file has no score for anyone,
+    // and counting it as 0 would drag every row down by its weight.
+    const scored = Object.keys(perLang);
+    const wsum = scored.reduce((acc, l) => acc + (weights[l] ?? 0), 0);
+    const weighted = wsum
+      ? scored.reduce((acc, l) => acc + (weights[l] ?? 0) * perLang[l], 0) / wsum
+      : 0;
     rows.push({ name: a.name, weighted, micro: total ? hit / total : 0, perLang });
   }
   rows.sort((a, b) => b.weighted - a.weighted);

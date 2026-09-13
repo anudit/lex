@@ -22,6 +22,8 @@ def main() -> None:
     args = parser.parse_args()
 
     checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
+    if checkpoint.get('requires_research_loader'):
+        raise ValueError('This experimental checkpoint needs its research inference graph; production export is unsupported')
     config = LexerConfig(**checkpoint.get('config', {}))
     model = NeuralLexer(config)
     model.load_state_dict(checkpoint['model_state_dict'])

@@ -5,7 +5,7 @@ const DIM: u32 = 96u;
 const EDIM: u32 = 64u;
 const HEAD_HIDDEN: u32 = 192u;
 const NCLASS: u32 = 9u;
-const KSIZE: u32 = 5u;
+const KSIZE: u32 = 7u;
 const TILE: u32 = 16u;
 const TILE_POOL: u32 = 4u;
 const MAX_JOBS: u32 = 64u;
@@ -16,37 +16,37 @@ const EMB_B: u32 = 3u;
 const EMB_S: u32 = 0u;
 const UP_P: u32 = 10176u;
 const UP_W: u32 = 192u;
-const UP_B: u32 = 1u;
+const UP_B: u32 = 3u;
 const UP_S: u32 = 17u;
 const UP_BI: u32 = 113u;
-const FD_P: u32 = 10368u;
+const FD_P: u32 = 10752u;
 const FD_W: u32 = 384u;
 const FD_B: u32 = 1u;
 const FD_S: u32 = 209u;
 const FD_BI: u32 = 273u;
-const FU_P: u32 = 10752u;
+const FU_P: u32 = 11136u;
 const FU_W: u32 = 1536u;
 const FU_B: u32 = 1u;
 const FU_S: u32 = 337u;
 const FU_BI: u32 = 1105u;
-const GS_P: u32 = 18096u;
+const GS_P: u32 = 18576u;
 const GS_W: u32 = 1152u;
 const GS_B: u32 = 1u;
 const GS_S: u32 = 6609u;
 const GS_BI: u32 = 6705u;
-const GG_P: u32 = 19248u;
+const GG_P: u32 = 19728u;
 const GG_W: u32 = 288u;
 const GG_B: u32 = 1u;
 const GG_S: u32 = 6801u;
 const GG_BI: u32 = 6897u;
-const HH_P: u32 = 19536u;
+const HH_P: u32 = 20016u;
 const HH_W: u32 = 1152u;
-const HH_B: u32 = 1u;
+const HH_B: u32 = 2u;
 const HH_S: u32 = 6993u;
 const HH_BI: u32 = 7185u;
-const HO_P: u32 = 20688u;
+const HO_P: u32 = 22320u;
 const HO_W: u32 = 54u;
-const HO_B: u32 = 1u;
+const HO_B: u32 = 3u;
 const HO_S: u32 = 7377u;
 const HO_BI: u32 = 7386u;
 const HNORM_F: u32 = 9604u;
@@ -84,10 +84,8 @@ struct Job {
 var<workgroup> tA  : array<f32, 3072>;   // TILE x max(DIM, HEAD_HIDDEN) = 16 x 192
 var<workgroup> tB  : array<f32, 3072>;   // TILE x 2*DIM = 16 x 192
 var<workgroup> tP  : array<f32, 1536>;   // TILE_POOL x 4*DIM = 4 x 384
-// Sized to DIM (96), not the 64-wide model's fixed 64: FILM_RANK (64) fits
-// inside it, and film()'s "threads past FILM_RANK write 0" branch runs for
-// every one of the 96 workgroup lanes.
-var<workgroup> red : array<f32, 96>;
+// Two slots per lane also accommodate the rank-128 FiLM candidate.
+var<workgroup> red : array<f32, 192>;
 var<workgroup> lg  : array<f32, 144>;    // TILE x NCLASS
 
 // WGSL's tanh is computed as (e^2x - 1)/(e^2x + 1) on some backends, so a
@@ -240,6 +238,29 @@ fn tile_rms(d: u32, n: u32) {
 }
 
 
+fn dotQA(base: u32, wpp: u32, bits: u32, row: u32, act: u32, width: u32) -> f32 {
+    var value = 0.0;
+    for (var k = 0u; k < width; k = k + 1u) {
+        value = value + wgt(base, wpp, bits, row + k, 1.0) * tA[act + k];
+    }
+    return value;
+}
+fn dotQB(base: u32, wpp: u32, bits: u32, row: u32, act: u32, width: u32) -> f32 {
+    var value = 0.0;
+    for (var k = 0u; k < width; k = k + 1u) {
+        value = value + wgt(base, wpp, bits, row + k, 1.0) * tB[act + k];
+    }
+    return value;
+}
+fn dotQRed(base: u32, wpp: u32, bits: u32, row: u32, width: u32) -> f32 {
+    var value = 0.0;
+    for (var k = 0u; k < width; k = k + 1u) {
+        value = value + wgt(base, wpp, bits, row + k, 1.0) * red[k];
+    }
+    return value;
+}
+
+
 @compute @workgroup_size(96)
 fn embed(@builtin(local_invocation_id) lid: vec3<u32>,
          @builtin(workgroup_id) wid: vec3<u32>) {
@@ -284,7 +305,7 @@ fn embed(@builtin(local_invocation_id) lid: vec3<u32>,
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
         if (t < T) {
-            let v = up_b + up_s * dotA64(up_w0, up_w1, j * EDIM);
+            let v = up_b + up_s * dotQA(UP_P, UP_W, UP_B, d * EDIM, j * EDIM, EDIM);
             hid[hbase + t * DIM + d] = v;
             scratch[r_xorig + t * DIM + d] = v;
         }
@@ -339,13 +360,14 @@ fn film(@builtin(local_invocation_id) lid: vec3<u32>,
     tA[d] = n0;
     tA[DIM + d] = n1;
     workgroupBarrier();
-    if (d < FILM_RANK) {
-        red[d] = tanh_s(fp[FD_BI + d] + fp[FD_S + d] * dotA192(
-            planes[FD_P + d * 6u], planes[FD_P + d * 6u + 1u],
-            planes[FD_P + d * 6u + 2u], planes[FD_P + d * 6u + 3u],
-            planes[FD_P + d * 6u + 4u], planes[FD_P + d * 6u + 5u], 0u));
-    } else {
-        red[d] = 0.0;
+    for (var r = d; r < 192u; r = r + 96u) {
+        red[r] = 0.0;
+        if (r < FILM_RANK) {
+            red[r] = tanh_s(fp[FD_BI + r] + fp[FD_S + r] * dotA192(
+                planes[FD_P + r * 6u], planes[FD_P + r * 6u + 1u],
+                planes[FD_P + r * 6u + 2u], planes[FD_P + r * 6u + 3u],
+                planes[FD_P + r * 6u + 4u], planes[FD_P + r * 6u + 5u], 0u));
+        }
     }
     workgroupBarrier();
 
@@ -413,21 +435,21 @@ fn l0_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[12348u + d * 3u];
-    let pic1 = planes[12348u + d * 3u + 1u];
-    let pic2 = planes[12348u + d * 3u + 2u];
-    let pig0 = planes[12348u + (DIM + d) * 3u];
-    let pig1 = planes[12348u + (DIM + d) * 3u + 1u];
-    let pig2 = planes[12348u + (DIM + d) * 3u + 2u];
+    let pic0 = planes[12756u + d * 3u];
+    let pic1 = planes[12756u + d * 3u + 1u];
+    let pic2 = planes[12756u + d * 3u + 2u];
+    let pig0 = planes[12756u + (DIM + d) * 3u];
+    let pig1 = planes[12756u + (DIM + d) * 3u + 1u];
+    let pig2 = planes[12756u + (DIM + d) * 3u + 2u];
     let sc = fp[2065u + d];
     let sg = fp[2065u + DIM + d];
     let bc = fp[2257u + d];
     let bg = fp[2257u + DIM + d];
     let dbias = fp[1969u + d];
     let dws = fp[1873u + d];
-    var dwv: array<f32, 5>;
+    var dwv: array<f32, KSIZE>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(12288u, 15u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(12672u, 21u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -454,8 +476,8 @@ fn l0_conv(@builtin(local_invocation_id) lid: vec3<u32>,
             var v: f32 = 0.0;
             if (t < T && d < 16u) {
                 let raw = fp[2657u + d] + fp[2641u + d] * dotA96(
-                    planes[13500u + d * 3u], planes[13500u + d * 3u + 1u],
-                    planes[13500u + d * 3u + 2u],
+                    planes[13908u + d * 3u], planes[13908u + d * 3u + 1u],
+                    planes[13908u + d * 3u + 2u],
                     j * DIM);
                 v = tanh_s(raw);
             }
@@ -467,9 +489,9 @@ fn l0_conv(@builtin(local_invocation_id) lid: vec3<u32>,
         let t = base_t + j;
         if (t < T) {
             let ef = fp[2865u + d] + fp[2673u + d] * dotB32(
-                planes[13548u + d], j * 2u * DIM);
+                planes[13956u + d], j * 2u * DIM);
             let eb = fp[2865u + DIM + d] + fp[2673u + DIM + d] * dotB32(
-                planes[13548u + DIM + d], j * 2u * DIM);
+                planes[13956u + DIM + d], j * 2u * DIM);
             scratch[r_fw + t * DIM + d] = sigmoid_s(ef);
             scratch[r_bw + t * DIM + d] = sigmoid_s(eb);
         }
@@ -530,12 +552,12 @@ fn l0_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[12924u + d * 6u];
-    let po1 = planes[12924u + d * 6u + 1u];
-    let po2 = planes[12924u + d * 6u + 2u];
-    let po3 = planes[12924u + d * 6u + 3u];
-    let po4 = planes[12924u + d * 6u + 4u];
-    let po5 = planes[12924u + d * 6u + 5u];
+    let po0 = planes[13332u + d * 6u];
+    let po1 = planes[13332u + d * 6u + 1u];
+    let po2 = planes[13332u + d * 6u + 2u];
+    let po3 = planes[13332u + d * 6u + 3u];
+    let po4 = planes[13332u + d * 6u + 4u];
+    let po5 = planes[13332u + d * 6u + 5u];
     let spo = fp[2449u + d];
     let bpo = fp[2545u + d];
     let og = sigmoid_s(fp[7972u + d]);
@@ -607,21 +629,21 @@ fn l1_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[13800u + d * 3u];
-    let pic1 = planes[13800u + d * 3u + 1u];
-    let pic2 = planes[13800u + d * 3u + 2u];
-    let pig0 = planes[13800u + (DIM + d) * 3u];
-    let pig1 = planes[13800u + (DIM + d) * 3u + 1u];
-    let pig2 = planes[13800u + (DIM + d) * 3u + 2u];
+    let pic0 = planes[14232u + d * 3u];
+    let pic1 = planes[14232u + d * 3u + 1u];
+    let pic2 = planes[14232u + d * 3u + 2u];
+    let pig0 = planes[14232u + (DIM + d) * 3u];
+    let pig1 = planes[14232u + (DIM + d) * 3u + 1u];
+    let pig2 = planes[14232u + (DIM + d) * 3u + 2u];
     let sc = fp[3249u + d];
     let sg = fp[3249u + DIM + d];
     let bc = fp[3441u + d];
     let bg = fp[3441u + DIM + d];
     let dbias = fp[3153u + d];
     let dws = fp[3057u + d];
-    var dwv: array<f32, 5>;
+    var dwv: array<f32, KSIZE>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(13740u, 15u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(14148u, 21u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -648,8 +670,8 @@ fn l1_conv(@builtin(local_invocation_id) lid: vec3<u32>,
             var v: f32 = 0.0;
             if (t < T && d < 16u) {
                 let raw = fp[3841u + d] + fp[3825u + d] * dotA96(
-                    planes[14952u + d * 3u], planes[14952u + d * 3u + 1u],
-                    planes[14952u + d * 3u + 2u],
+                    planes[15384u + d * 3u], planes[15384u + d * 3u + 1u],
+                    planes[15384u + d * 3u + 2u],
                     j * DIM);
                 v = tanh_s(raw);
             }
@@ -661,9 +683,9 @@ fn l1_conv(@builtin(local_invocation_id) lid: vec3<u32>,
         let t = base_t + j;
         if (t < T) {
             let ef = fp[4049u + d] + fp[3857u + d] * dotB32(
-                planes[15000u + d], j * 2u * DIM);
+                planes[15432u + d], j * 2u * DIM);
             let eb = fp[4049u + DIM + d] + fp[3857u + DIM + d] * dotB32(
-                planes[15000u + DIM + d], j * 2u * DIM);
+                planes[15432u + DIM + d], j * 2u * DIM);
             scratch[r_fw + t * DIM + d] = sigmoid_s(ef);
             scratch[r_bw + t * DIM + d] = sigmoid_s(eb);
         }
@@ -724,12 +746,12 @@ fn l1_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[14376u + d * 6u];
-    let po1 = planes[14376u + d * 6u + 1u];
-    let po2 = planes[14376u + d * 6u + 2u];
-    let po3 = planes[14376u + d * 6u + 3u];
-    let po4 = planes[14376u + d * 6u + 4u];
-    let po5 = planes[14376u + d * 6u + 5u];
+    let po0 = planes[14808u + d * 6u];
+    let po1 = planes[14808u + d * 6u + 1u];
+    let po2 = planes[14808u + d * 6u + 2u];
+    let po3 = planes[14808u + d * 6u + 3u];
+    let po4 = planes[14808u + d * 6u + 4u];
+    let po5 = planes[14808u + d * 6u + 5u];
     let spo = fp[3633u + d];
     let bpo = fp[3729u + d];
     let og = sigmoid_s(fp[8356u + d]);
@@ -801,21 +823,21 @@ fn l2_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[15252u + d * 3u];
-    let pic1 = planes[15252u + d * 3u + 1u];
-    let pic2 = planes[15252u + d * 3u + 2u];
-    let pig0 = planes[15252u + (DIM + d) * 3u];
-    let pig1 = planes[15252u + (DIM + d) * 3u + 1u];
-    let pig2 = planes[15252u + (DIM + d) * 3u + 2u];
+    let pic0 = planes[15708u + d * 3u];
+    let pic1 = planes[15708u + d * 3u + 1u];
+    let pic2 = planes[15708u + d * 3u + 2u];
+    let pig0 = planes[15708u + (DIM + d) * 3u];
+    let pig1 = planes[15708u + (DIM + d) * 3u + 1u];
+    let pig2 = planes[15708u + (DIM + d) * 3u + 2u];
     let sc = fp[4433u + d];
     let sg = fp[4433u + DIM + d];
     let bc = fp[4625u + d];
     let bg = fp[4625u + DIM + d];
     let dbias = fp[4337u + d];
     let dws = fp[4241u + d];
-    var dwv: array<f32, 5>;
+    var dwv: array<f32, KSIZE>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(15192u, 15u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(15624u, 21u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -842,8 +864,8 @@ fn l2_conv(@builtin(local_invocation_id) lid: vec3<u32>,
             var v: f32 = 0.0;
             if (t < T && d < 16u) {
                 let raw = fp[5025u + d] + fp[5009u + d] * dotA96(
-                    planes[16404u + d * 3u], planes[16404u + d * 3u + 1u],
-                    planes[16404u + d * 3u + 2u],
+                    planes[16860u + d * 3u], planes[16860u + d * 3u + 1u],
+                    planes[16860u + d * 3u + 2u],
                     j * DIM);
                 v = tanh_s(raw);
             }
@@ -855,9 +877,9 @@ fn l2_conv(@builtin(local_invocation_id) lid: vec3<u32>,
         let t = base_t + j;
         if (t < T) {
             let ef = fp[5233u + d] + fp[5041u + d] * dotB32(
-                planes[16452u + d], j * 2u * DIM);
+                planes[16908u + d], j * 2u * DIM);
             let eb = fp[5233u + DIM + d] + fp[5041u + DIM + d] * dotB32(
-                planes[16452u + DIM + d], j * 2u * DIM);
+                planes[16908u + DIM + d], j * 2u * DIM);
             scratch[r_fw + t * DIM + d] = sigmoid_s(ef);
             scratch[r_bw + t * DIM + d] = sigmoid_s(eb);
         }
@@ -918,12 +940,12 @@ fn l2_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[15828u + d * 6u];
-    let po1 = planes[15828u + d * 6u + 1u];
-    let po2 = planes[15828u + d * 6u + 2u];
-    let po3 = planes[15828u + d * 6u + 3u];
-    let po4 = planes[15828u + d * 6u + 4u];
-    let po5 = planes[15828u + d * 6u + 5u];
+    let po0 = planes[16284u + d * 6u];
+    let po1 = planes[16284u + d * 6u + 1u];
+    let po2 = planes[16284u + d * 6u + 2u];
+    let po3 = planes[16284u + d * 6u + 3u];
+    let po4 = planes[16284u + d * 6u + 4u];
+    let po5 = planes[16284u + d * 6u + 5u];
     let spo = fp[4817u + d];
     let bpo = fp[4913u + d];
     let og = sigmoid_s(fp[8740u + d]);
@@ -995,21 +1017,21 @@ fn l3_conv(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let pic0 = planes[16704u + d * 3u];
-    let pic1 = planes[16704u + d * 3u + 1u];
-    let pic2 = planes[16704u + d * 3u + 2u];
-    let pig0 = planes[16704u + (DIM + d) * 3u];
-    let pig1 = planes[16704u + (DIM + d) * 3u + 1u];
-    let pig2 = planes[16704u + (DIM + d) * 3u + 2u];
+    let pic0 = planes[17184u + d * 3u];
+    let pic1 = planes[17184u + d * 3u + 1u];
+    let pic2 = planes[17184u + d * 3u + 2u];
+    let pig0 = planes[17184u + (DIM + d) * 3u];
+    let pig1 = planes[17184u + (DIM + d) * 3u + 1u];
+    let pig2 = planes[17184u + (DIM + d) * 3u + 2u];
     let sc = fp[5617u + d];
     let sg = fp[5617u + DIM + d];
     let bc = fp[5809u + d];
     let bg = fp[5809u + DIM + d];
     let dbias = fp[5521u + d];
     let dws = fp[5425u + d];
-    var dwv: array<f32, 5>;
+    var dwv: array<f32, KSIZE>;
     for (var k: u32 = 0u; k < KSIZE; k = k + 1u) {
-        dwv[k] = wgt(16644u, 15u, 4u, d * KSIZE + k, dws);
+        dwv[k] = wgt(17100u, 21u, 4u, d * KSIZE + k, dws);
     }
 
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
@@ -1036,8 +1058,8 @@ fn l3_conv(@builtin(local_invocation_id) lid: vec3<u32>,
             var v: f32 = 0.0;
             if (t < T && d < 16u) {
                 let raw = fp[6209u + d] + fp[6193u + d] * dotA96(
-                    planes[17856u + d * 3u], planes[17856u + d * 3u + 1u],
-                    planes[17856u + d * 3u + 2u],
+                    planes[18336u + d * 3u], planes[18336u + d * 3u + 1u],
+                    planes[18336u + d * 3u + 2u],
                     j * DIM);
                 v = tanh_s(raw);
             }
@@ -1049,9 +1071,9 @@ fn l3_conv(@builtin(local_invocation_id) lid: vec3<u32>,
         let t = base_t + j;
         if (t < T) {
             let ef = fp[6417u + d] + fp[6225u + d] * dotB32(
-                planes[17904u + d], j * 2u * DIM);
+                planes[18384u + d], j * 2u * DIM);
             let eb = fp[6417u + DIM + d] + fp[6225u + DIM + d] * dotB32(
-                planes[17904u + DIM + d], j * 2u * DIM);
+                planes[18384u + DIM + d], j * 2u * DIM);
             scratch[r_fw + t * DIM + d] = sigmoid_s(ef);
             scratch[r_bw + t * DIM + d] = sigmoid_s(eb);
         }
@@ -1112,12 +1134,12 @@ fn l3_post(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_bw = sbase + 3u * job.stride;
     let base_t = wid.x * TILE;
 
-    let po0 = planes[17280u + d * 6u];
-    let po1 = planes[17280u + d * 6u + 1u];
-    let po2 = planes[17280u + d * 6u + 2u];
-    let po3 = planes[17280u + d * 6u + 3u];
-    let po4 = planes[17280u + d * 6u + 4u];
-    let po5 = planes[17280u + d * 6u + 5u];
+    let po0 = planes[17760u + d * 6u];
+    let po1 = planes[17760u + d * 6u + 1u];
+    let po2 = planes[17760u + d * 6u + 2u];
+    let po3 = planes[17760u + d * 6u + 3u];
+    let po4 = planes[17760u + d * 6u + 4u];
+    let po5 = planes[17760u + d * 6u + 5u];
     let spo = fp[6001u + d];
     let bpo = fp[6097u + d];
     let og = sigmoid_s(fp[9124u + d]);
@@ -1313,11 +1335,11 @@ fn head(@builtin(local_invocation_id) lid: vec3<u32>,
     }
     workgroupBarrier();
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
-        let a0 = fp[HH_BI + o0] + fp[HH_S + o0] * dotB192(h0a, h0b, h0c, h0d, h0e, h0f, j * 2u * DIM);
+        let a0 = fp[HH_BI + o0] + fp[HH_S + o0] * dotQB(HH_P, HH_W, HH_B, o0 * 2u * DIM, j * 2u * DIM, 2u * DIM);
         let c0 = 0.7978845608 * (a0 + 0.044715 * a0 * a0 * a0);
         tA[j * HEAD_HIDDEN + o0] = 0.5 * a0 * (1.0 + tanh_s(c0));
         if (o1 < HEAD_HIDDEN) {
-            let a1 = fp[HH_BI + o1] + fp[HH_S + o1] * dotB192(h1a, h1b, h1c, h1d, h1e, h1f, j * 2u * DIM);
+            let a1 = fp[HH_BI + o1] + fp[HH_S + o1] * dotQB(HH_P, HH_W, HH_B, o1 * 2u * DIM, j * 2u * DIM, 2u * DIM);
             let c1 = 0.7978845608 * (a1 + 0.044715 * a1 * a1 * a1);
             tA[j * HEAD_HIDDEN + o1] = 0.5 * a1 * (1.0 + tanh_s(c1));
         }
@@ -1326,7 +1348,7 @@ fn head(@builtin(local_invocation_id) lid: vec3<u32>,
     if (d < NCLASS) {
         for (var j: u32 = 0u; j < TILE; j = j + 1u) {
             lg[j * NCLASS + d] = fp[HO_BI + d] + fp[HO_S + d]
-                * dotA192(ho0, ho1, ho2, ho3, ho4, ho5, j * HEAD_HIDDEN);
+                * dotQA(HO_P, HO_W, HO_B, d * HEAD_HIDDEN, j * HEAD_HIDDEN, HEAD_HIDDEN);
         }
     }
     workgroupBarrier();

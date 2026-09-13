@@ -7,6 +7,7 @@ Results measure early supervised token learning, not final browser accuracy.
 from __future__ import annotations
 
 import argparse
+import copy
 from dataclasses import asdict
 import hashlib
 import json
@@ -17,12 +18,14 @@ import zipfile
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 import data_pipeline as dp
 from languages import TARGET_LANGUAGES, weights
 from model import LexerConfig, NeuralLexer
 from labels import MASK
+from research_variants import BASE as RESEARCH_BASE, VARIANTS, ResearchLexer
 
 
 CANDIDATES = {
@@ -108,13 +111,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dataset', type=Path, default=Path(__file__).parent / 'corpus/dataset')
     ap.add_argument('--out', type=Path, required=True)
-    ap.add_argument('--candidates', nargs='+', choices=CANDIDATES, default=list(CANDIDATES))
+    ap.add_argument('--candidates', nargs='+', choices=[*CANDIDATES, *VARIANTS], default=list(CANDIDATES))
     ap.add_argument('--steps', type=int, default=160)
     ap.add_argument('--warmup', type=int, default=32)
     ap.add_argument('--batch-size', type=int, default=8)
     ap.add_argument('--train-per-lang', type=int, default=16)
     ap.add_argument('--val-per-lang', type=int, default=2)
     ap.add_argument('--seed', type=int, default=20260912)
+    ap.add_argument('--data-seed', type=int, default=None,
+                    help='fix sampled windows and batches across initialization seeds')
     args = ap.parse_args()
     if not 0 < args.warmup < args.steps:
         ap.error('Require 0 < warmup < steps')
@@ -127,20 +132,25 @@ def main():
     # deterministic implementation. Seed everything and record this limitation.
     torch.use_deterministic_algorithms(True, warn_only=True)
     print('Loading stratified windows from stored NPZ members', flush=True)
-    train_ds, train_ids = subset(args.dataset / 'train.npz', args.train_per_lang, args.seed)
-    val_ds, val_ids = subset(args.dataset / 'val.npz', args.val_per_lang, args.seed + 1)
+    data_seed = args.seed if args.data_seed is None else args.data_seed
+    dataset_manifest = json.loads((args.dataset / 'language_manifest.json').read_text())
+    if tuple(sorted(item['id'] for item in dataset_manifest['languages'])) != TARGET_LANGUAGES:
+        raise ValueError('Cached language IDs differ from the current training manifest')
+    train_ds, train_ids = subset(args.dataset / 'train.npz', args.train_per_lang, data_seed)
+    val_ds, val_ids = subset(args.dataset / 'val.npz', args.val_per_lang, data_seed + 1)
     # Every candidate gets the exact same sampled index sequence, with tempered
     # language weighting. All windows of a language have equal probability.
     counts = np.bincount(train_ds.langs, minlength=len(TARGET_LANGUAGES))
     lw = np.array([weights()[l] ** 0.5 for l in TARGET_LANGUAGES])
     p = lw[train_ds.langs] / counts[train_ds.langs]
     p /= p.sum()
-    order = np.random.default_rng(args.seed + 2).choice(len(train_ds),
+    order = np.random.default_rng(data_seed + 2).choice(len(train_ds),
                 (args.steps, args.batch_size), p=p)
     meta = json.loads((args.dataset / 'meta.json').read_text())
     manifest = dict(args={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
                     torch=torch.__version__, device='mps', distillation=False,
                     auxiliary_losses={'language': 0.15, 'structure': 0.2},
+                    research_variants={name: VARIANTS[name] for name in args.candidates if name in VARIANTS},
                     deterministic='warn_only: MPS index accumulation is nondeterministic',
                     dataset_meta_sha256=hashlib.sha256((args.dataset / 'meta.json').read_bytes()).hexdigest(),
                     train_ids=train_ids, val_ids=val_ids,
@@ -151,29 +161,44 @@ def main():
     spec = importlib.util.spec_from_file_location('_smoke_trainer', Path(__file__).parents[1] / 'train/train.py')
     trainer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(trainer)
-    criterion = trainer.BoundaryWeightedCrossEntropy(trainer.class_weights(meta['label_counts'], device))
     results = []
     torch.manual_seed(args.seed)
     # Freeze the original initialization even when the production default changes.
     common = NeuralLexer(LexerConfig()).state_dict()
     for name in args.candidates:
+        variant = VARIANTS.get(name, {})
         torch.manual_seed(args.seed)
-        cfg = LexerConfig(**CANDIDATES[name])
-        model = NeuralLexer(cfg)
+        cfg = LexerConfig(**(RESEARCH_BASE | variant.get('config', {}) if name in VARIANTS else CANDIDATES[name]))
+        model = ResearchLexer(cfg, repeats=variant.get('repeats', 1),
+                              full_precision=variant.get('full_precision', False),
+                              embedding_rms_clip=variant.get('embedding_rms_clip', False))
         state = model.state_dict()
         model.load_state_dict({k: common[k] if k in common and common[k].shape == v.shape else v
                                for k, v in state.items()})
         packed = model.size_report()['packed_bytes']
         assert packed <= 111000, (name, packed)
         model.to(device)
+        from labels import CLASS_NAMES
+        freq = torch.tensor([max(1, meta['label_counts'].get(n, 0)) for n in CLASS_NAMES], dtype=torch.float32)
+        cw = (freq.sum() / freq) ** variant.get('class_exponent', 0.5)
+        criterion = trainer.BoundaryWeightedCrossEntropy((cw / cw.mean()).to(device))
         torch.manual_seed(args.seed + 10)
         lang_head = torch.nn.Linear(cfg.dim * 2, len(TARGET_LANGUAGES)).to(device)
         struct_head = torch.nn.Linear(cfg.dim, trainer.NUM_STRUCT_BITS).to(device)
-        optimizer = torch.optim.AdamW(list(model.parameters()) + list(lang_head.parameters())
-                                      + list(struct_head.parameters()), lr=0.003, weight_decay=0.01)
+        predictor = torch.nn.Linear(cfg.dim, cfg.dim).to(device) if variant.get('jepa') else None
+        ema = copy.deepcopy(model).eval() if predictor is not None else None
+        if ema is not None:
+            ema.requires_grad_(False)
+        parameters = list(model.parameters()) + list(lang_head.parameters()) + list(struct_head.parameters())
+        if predictor is not None:
+            parameters += list(predictor.parameters())
+        optimizer = torch.optim.AdamW(parameters, lr=0.003, weight_decay=0.01)
+        mask_rng = torch.Generator().manual_seed(args.seed + 20)
         records = []
         start = time.monotonic()
-        print(f'{name}: {packed} bytes; {args.steps} steps, {args.warmup} FP', flush=True)
+        storage = (f'{4 * sum(p.numel() for p in model.parameters())} FP32 bytes (diagnostic only)'
+                   if model.full_precision else f'{packed} packed bytes')
+        print(f'{name}: {storage}; {args.steps} steps, {args.warmup} FP', flush=True)
         for step, indices in enumerate(order, 1):
             model.train()
             model.set_quant(step > args.warmup)
@@ -187,13 +212,34 @@ def main():
             mask = valid.unsqueeze(-1).expand_as(target)
             loss = loss + 0.2 * torch.nn.functional.binary_cross_entropy_with_logits(
                 struct_head(token_repr)[mask], target[mask])
+            if ema is not None and step > args.warmup:
+                # Predict contextual EMA targets at masked word positions.
+                # This is a small data2vec/JEPA-inspired auxiliary experiment,
+                # not an implementation of the published transformer systems.
+                selected = ((torch.rand(label.shape, generator=mask_rng) < 0.15).to(device)
+                            & valid & (feats['kind'] == 0))
+                masked = {k: torch.where(selected, torch.zeros_like(v), v)
+                          for k, v in feats.items()}
+                # Remove direct lexical identity at the selected word positions.
+                masked['kind'] = torch.where(selected, torch.ones_like(feats['kind']), feats['kind'])
+                _, _, predicted = model(masked, valid, return_signature=True)
+                ema.set_quant(True)
+                with torch.no_grad():
+                    _, _, latent = ema(feats, valid, return_signature=True)
+                    latent = F.layer_norm(latent, (cfg.dim,))
+                latent_loss = F.smooth_l1_loss(predictor(predicted), latent, reduction='none').mean(-1)
+                loss = loss + variant['jepa'] * (latent_loss * selected).sum() / selected.sum().clamp_min(1)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+            if ema is not None:
+                with torch.no_grad():
+                    for target_param, source_param in zip(ema.parameters(), model.parameters()):
+                        target_param.lerp_(source_param, 0.01)
             progress = max(0, step - args.warmup) / (args.steps - args.warmup)
             for group in optimizer.param_groups:
                 group['lr'] = 0.0003 + 0.0027 * (1 + np.cos(np.pi * progress)) / 2
-            if step % 20 == 0:
+            if step % 200 == 0:
                 value = float(loss.detach())
                 if not np.isfinite(value):
                     raise RuntimeError(f'Nonfinite loss: {name} step {step}')
@@ -205,11 +251,16 @@ def main():
         torch.mps.synchronize()
         elapsed = time.monotonic() - start
         model.cpu()
-        torch.save(dict(config=asdict(cfg), model_state_dict=model.state_dict()), args.out / f'{name}.pt')
-        result = dict(name=name, packed_bytes=packed, seconds=elapsed, records=records)
+        inference_special = model.repeats != 1 or model.full_precision or model.embedding_rms_clip
+        torch.save(dict(config=asdict(cfg), model_state_dict=model.state_dict(),
+                        research_variant=variant,
+                        requires_research_loader=inference_special), args.out / f'{name}.pt')
+        result = dict(name=name, packed_bytes=None if model.full_precision else packed,
+                      fp32_weight_bytes=4 * sum(p.numel() for p in model.parameters()) if model.full_precision else None,
+                      seconds=elapsed, records=records, variant=variant)
         results.append(result)
         (args.out / 'results.json').write_text(json.dumps(results, indent=2))
-        del optimizer, model
+        del optimizer, model, ema, predictor, parameters
         torch.mps.empty_cache()
     print(json.dumps([{k: v for k, v in r.items() if k != 'records'} | {'weighted': r['records'][-1]['weighted']}
                       for r in results], indent=2), flush=True)

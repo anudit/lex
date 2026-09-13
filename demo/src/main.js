@@ -1,8 +1,8 @@
 // Benchmark: two tabs, sharing a field of highlighters -- lex-lite's bench (5:
 // gpu-lexer, Prism.js, Sugar High, Shiki, plus lex-lite) over ~50 mainstream
 // languages, lex-large's bench (6: the same four plus highlight.js, plus
-// lex-large) over the ~190-grammar train_large corpus, where highlight.js's
-// own ~193-grammar coverage actually applies.
+// lex-large) over the 185-grammar train_large test split, where highlight.js's
+// own grammar coverage actually applies.
 //
 // Correctness is measured once and committed to results.json, because the answer
 // only changes when the model or the corpora change -- recomputing thousands of
@@ -21,10 +21,14 @@
 //     the house style; "unseen repos" is drawn from repositories absent from the
 //     training corpus, where every engine is equally out of distribution -- the
 //     one to quote in a head-to-head between lex-lite and the field. "train_large
-//     corpus" is the 193-grammar bench lex-large trained on (train_large/corpus):
-//     out of distribution for lex-lite and every non-lex engine, in distribution
-//     house style for lex-large, so it shows breadth of coverage rather than a
-//     fair head-to-head.
+//     corpus" is the frozen test split of lex-large's 185-grammar corpus
+//     (train_large/corpus): held-out files but not repositories, so like
+//     "held-out files" it is house style for lex-large. Each file is scored
+//     against the teacher that labelled its grammar for training -- Shiki, or
+//     Highlight.js for grammars Shiki doesn't bundle -- so the number is
+//     comparable to the training log's held-out WEIGHTED metric. highlight.js is
+//     not scored on the files it labelled, so its row covers the Shiki-taught
+//     grammars only.
 //
 
 import './style.css';
@@ -49,10 +53,11 @@ app.innerHTML = `
     <h1>lex vs. the field</h1>
     <p class="sub">
       lex-lite and lex-large (ours) against gpu-lexer, Prism.js, Sugar High,
-      and &mdash; on the ~190-language lex-large bench &mdash; highlight.js
+      and &mdash; on the 185-grammar lex-large bench &mdash; highlight.js
       too, all normalized to the same nine syntax classes and scored against
-      <strong>Shiki</strong> per non-whitespace character, weighted by GitHub
-      language popularity. A language an engine does not support scores zero
+      <strong>Shiki</strong> (or, for grammars Shiki doesn't bundle, the
+      Highlight.js labels lex-large was trained on) per non-whitespace
+      character, weighted by GitHub language popularity. A language an engine does not support scores zero
       &mdash; an unhighlighted file is a wrong answer, not a missing
       measurement.
     </p>
@@ -91,7 +96,7 @@ app.innerHTML = `
       lex-lite &middot; ~50 languages
     </button>
     <button class="tab-btn" data-group="large" type="button" role="tab" aria-selected="false">
-      lex-large &middot; ~190 languages
+      lex-large &middot; 185 languages
     </button>
   </div>
   <div id="results"></div>
@@ -146,7 +151,7 @@ function renderAgreementTable(lexRow, present, label) {
   const title = AGREEMENT_TITLE[label] ?? label;
   return `
     <div class="agreement-table">
-      <h3 class="agree-title">${title} label agreement with Shiki by language</h3>
+      <h3 class="agree-title">${title} label agreement with ${label === 'train_large corpus' ? 'the labelling teacher' : 'Shiki'} by language</h3>
       <div class="scroll">
         <table>
           <thead><tr><th>agreement</th><th>verified languages (${langs.length})</th></tr></thead>
@@ -184,8 +189,14 @@ function renderCorrectness(rows, label, nFiles, present, group) {
             <span class="bar-value">${pct(r.weighted)}</span>
           </div>`).join('')}
       </div>
-      <p class="footnote">Popularity-weighted agreement with Shiki over ${nFiles} files in
-        ${present.size} languages, renormalized over the languages present.</p>
+      <p class="footnote">${group === 'large'
+        ? `Popularity-weighted agreement with each grammar's labelling teacher (Shiki,
+          or Highlight.js where Shiki has no grammar) over ${nFiles} held-out test-split
+          files in ${present.size} languages, renormalized over the languages each engine
+          was scored on. highlight.js is not scored against its own labels, so its row
+          covers the Shiki-taught grammars only.`
+        : `Popularity-weighted agreement with Shiki over ${nFiles} files in
+          ${present.size} languages, renormalized over the languages present.`}</p>
       ${renderAgreementTable(rows.find((r) => r.name === 'lex-large (ours)') ?? rows.find((r) => r.name === 'lex-lite (ours)'), present, label)}
       <details>
         <summary>Per-language breakdown</summary>
