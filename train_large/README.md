@@ -113,10 +113,13 @@ language unless `--allow-underfilled` is explicitly supplied for a smoke run.
 
 ## Training
 
-Train the unquantized teacher first:
+Train the unquantized teacher first. Training uses DistributedDataParallel when
+launched with `torchrun`; `--batch-size` and `--workers` are per GPU. The wrapper
+keeps the historical global teacher batch at 32 (8 per GPU on four GPUs):
 
 ```bash
-.venv/bin/python -u train_teacher.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/torchrun \
+  --standalone --nproc-per-node=4 train_teacher.py \
   2>&1 | tee train_teacher.log
 ```
 
@@ -133,7 +136,8 @@ second teacher forward pass during every one of the 48 student epochs:
 .venv/bin/python -u cache_teacher_logits.py \
   2>&1 | tee cache_teacher_logits.log
 
-.venv/bin/python -u train.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/torchrun \
+  --standalone --nproc-per-node=4 train.py \
   2>&1 | tee train_student.log
 ```
 
@@ -146,10 +150,10 @@ Audit the frozen test split, including the two teacher subsets:
 
 The student defaults to 48 epochs: six FP warmup epochs, 34 broadly tempered QAT
 epochs, and eight natural-calibration epochs. CUDA defaults are BF16 autocast,
-`torch.compile(mode="max-autotune")`, fused AdamW, pinned/prefetched input, and
-batch size 64 for a 16 GiB RTX 5060 Ti. The language auxiliary loss is reduced
-to 0.15 because a 185-way identity target otherwise overwhelms the token
-objective.
+fused AdamW, pinned/prefetched input, and a global batch size of 64 (16 per GPU
+on four GPUs). Compilation defaults to `none` because the tested Inductor builds
+crashed at epoch boundaries. The language auxiliary loss is reduced to 0.15
+because a 185-way identity target otherwise overwhelms the token objective.
 
 ## Acceptance gates
 

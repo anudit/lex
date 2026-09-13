@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -61,6 +62,7 @@ runpy.run_path(target, run_name='__main__')
             self.assertEqual(get('--kernel-size'), '5' if overrides else '7')
             self.assertEqual(get('--erase-rank'), '32')
             self.assertEqual(get('--n-layers'), '4')
+            self.assertEqual(get('--compile-mode'), 'none')
             if entry == 'train_teacher.py':
                 self.assertIn('--full-precision', args)
                 self.assertEqual(get('--dim'), '192')
@@ -70,6 +72,16 @@ runpy.run_path(target, run_name='__main__')
                 self.assertEqual([get(f) for f in ('--input-bits', '--head-bits', '--output-bits')], ['3', '2', '3'])
                 self.assertEqual(get('--weight-budget'), '111000')
                 self.assertEqual('--binary-ste' in args, not bool(overrides))
+
+        ddp_env = dict(os.environ, WORLD_SIZE='4')
+        for entry, expected_batch in [('train.py', '16'), ('train_teacher.py', '8')]:
+            output = subprocess.check_output(
+                [sys.executable, '-c', script, f'train_large/{entry}'],
+                cwd=ROOT, text=True, env=ddp_env)
+            args = json.loads(output)
+            get = lambda flag: args[args.index(flag) + 1]
+            self.assertEqual(get('--batch-size'), expected_batch)
+            self.assertEqual(get('--workers'), '4')
 
     def test_binary_forward_and_gradient(self):
         w = torch.tensor([[0.2, -0.4, 0.6, -0.8, 1.2]], requires_grad=True)

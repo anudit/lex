@@ -7,6 +7,7 @@ not provide that flag, so this stays compatible with ../train/train.py.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -31,17 +32,20 @@ def _default(flag: str, value: str | None = None) -> None:
 def main() -> None:
     from model import student_config
     student = student_config()
+    world_size = int(os.environ.get('WORLD_SIZE', '1'))
     defaults = {
         '--dataset': './corpus/dataset',
         '--total-tokens': '160000000',
         '--out-dir': './checkpoints_student',
         '--epochs': '48',
         '--warmup-epochs': '6',
-        '--batch-size': '64',
-        '--workers': '8',
+        # Keep the historical global batch at 64 under torchrun. --batch-size
+        # is per process/GPU in the shared DDP trainer.
+        '--batch-size': str(max(1, 64 // world_size)),
+        '--workers': '4' if world_size > 1 else '8',
         '--lr': '3e-3',
         '--precision': 'bf16',
-        '--compile-mode': 'max-autotune',
+        '--compile-mode': 'none',
         '--matmul-precision': 'high',
         '--prefetch-factor': '4',
         '--dim': '96',

@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 from train import main
 
+WORLD_SIZE = int(os.environ.get('WORLD_SIZE', '1'))
+
 DEFAULTS = (
     ('--out-dir', './checkpoints_teacher'),
     ('--epochs', '24'),
-    ('--batch-size', '32'),
-    ('--workers', '8'),
+    # --batch-size and --workers are per process/GPU under torchrun.
+    ('--batch-size', str(max(1, 32 // WORLD_SIZE))),
+    ('--workers', '4' if WORLD_SIZE > 1 else '8'),
     ('--lr', '2e-3'),
     ('--precision', 'bf16'),
-    ('--compile-mode', 'max-autotune'),
+    ('--compile-mode', 'none'),
     ('--matmul-precision', 'high'),
     ('--prefetch-factor', '4'),
     ('--dim', '192'),

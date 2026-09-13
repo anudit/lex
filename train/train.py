@@ -36,9 +36,11 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader, Sampler, WeightedRandomSampler
 
 import data_pipeline as dp
 import export
@@ -51,12 +53,65 @@ from languages import (
 from model import LexerConfig, NeuralLexer
 
 
-def pick_device() -> torch.device:
-    if torch.backends.mps.is_available():
+def distributed_context(local_rank_arg: int = 0) -> tuple[int, int, int]:
+    """Initialize torchrun's process group, while keeping plain Python runs intact."""
+    world_size = int(os.environ.get('WORLD_SIZE', '1'))
+    rank = int(os.environ.get('RANK', '0'))
+    local_rank = int(os.environ.get('LOCAL_RANK', str(local_rank_arg)))
+    if world_size > 1 and not dist.is_initialized():
+        backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+        dist.init_process_group(backend=backend, init_method='env://')
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+    return rank, world_size, local_rank
+
+
+def pick_device(local_rank: int = 0) -> torch.device:
+    # MPS has no DistributedDataParallel collectives. A CPU torchrun is useful
+    # for smoke-testing the DDP path on a Mac, so fall back to CPU in that case.
+    if torch.backends.mps.is_available() and not dist.is_initialized():
         return torch.device('mps')
     if torch.cuda.is_available():
-        return torch.device('cuda')
+        return torch.device('cuda', local_rank)
     return torch.device('cpu')
+
+
+class DistributedWeightedSampler(Sampler[int]):
+    """Weighted replacement sampling with an independent, equal-size rank shard."""
+
+    def __init__(self, weights: torch.Tensor, dataset_size: int, rank: int,
+                 world_size: int, seed: int):
+        self.weights = weights
+        self.num_samples = math.ceil(dataset_size / world_size)
+        self.rank = rank
+        self.seed = seed
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+    def __iter__(self):
+        generator = torch.Generator().manual_seed(
+            self.seed + self.epoch * 104729 + self.rank)
+        return iter(torch.multinomial(
+            self.weights, self.num_samples, replacement=True,
+            generator=generator).tolist())
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+
+class DistributedEvalSampler(Sampler[int]):
+    """Non-padding evaluation shard, so validation examples are never duplicated."""
+
+    def __init__(self, dataset_size: int, rank: int, world_size: int):
+        self.indices = range(rank, dataset_size, world_size)
+
+    def __iter__(self):
+        return iter(self.indices)
+
+    def __len__(self) -> int:
+        return len(self.indices)
 
 
 def class_weights(counts: dict[str, int], device: torch.device) -> torch.Tensor:
@@ -272,6 +327,11 @@ def evaluate(model: NeuralLexer, loader: DataLoader, device: torch.device,
         cls_hit.index_add_(0, vl, (vp == vl).to(torch.int64))
 
     # One synchronization for the complete evaluation instead of several per batch.
+    batch_count = torch.tensor(batches, dtype=torch.int64, device=device)
+    if dist.is_initialized():
+        for value in (hit, tot, cls_hit, cls_tot, boundary_tp, boundary_pred,
+                      boundary_gold, loss_sum, batch_count):
+            dist.all_reduce(value, op=dist.ReduceOp.SUM)
     hit_cpu = hit.cpu()
     tot_cpu = tot.cpu()
     cls_hit_cpu = cls_hit.cpu()
@@ -284,7 +344,7 @@ def evaluate(model: NeuralLexer, loader: DataLoader, device: torch.device,
     micro = (hit_cpu.sum() / tot_cpu.sum().clamp_min(1)).item()
     macro = sum(per_lang.get(l, 0.0) for l in TARGET_LANGUAGES) / n_lang
     return {
-        'loss': (loss_sum / max(1, batches)).item(),
+        'loss': (loss_sum / batch_count.clamp_min(1)).item(),
         'weighted': weighted,
         'micro': micro,
         'macro': macro,
@@ -389,35 +449,42 @@ def main() -> None:
                          'OneCycleLR ramp, since restarting the ramp on an already-'
                          'converged quantized model would push it away from its optimum '
                          'before re-converging.')
+    ap.add_argument('--local-rank', '--local_rank', type=int, default=0,
+                    help=argparse.SUPPRESS)
     args = ap.parse_args()
 
+    rank, world_size, local_rank = distributed_context(args.local_rank)
+    is_main = rank == 0
+    log = print if is_main else lambda *args, **kwargs: None
     os.makedirs(args.out_dir, exist_ok=True)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    device = pick_device()
-    print(f'>> device: {device}')
+    np.random.seed(args.seed + rank)
+    torch.manual_seed(args.seed + rank)
+    device = pick_device(local_rank)
+    log(f'>> device: {device}' +
+        (f' (DDP rank {rank}/{world_size}, global batch {args.batch_size * world_size})'
+         if world_size > 1 else ''))
     torch.set_float32_matmul_precision(args.matmul_precision)
     amp_dtype = ({'bf16': torch.bfloat16, 'fp16': torch.float16}.get(args.precision)
                  if device.type == 'cuda' else None)
     if args.precision != 'fp32' and amp_dtype is None:
-        print(f'>> precision: {args.precision} requested but CUDA is unavailable; using fp32')
+        log(f'>> precision: {args.precision} requested but CUDA is unavailable; using fp32')
     else:
-        print(f'>> precision: {args.precision}, matmul {args.matmul_precision}')
+        log(f'>> precision: {args.precision}, matmul {args.matmul_precision}')
 
     ds, meta = dp.build(cache=args.dataset, total_tokens=args.total_tokens)
-    print(f">> corpus: {meta['total_tokens']:,} tokens, {meta['files']:,} files, "
+    log(f">> corpus: {meta['total_tokens']:,} tokens, {meta['files']:,} files, "
           f"{meta['languages_covered']}/{meta['languages_target']} languages "
           f"({100 * meta['weight_covered']:.1f}% of eval weight)")
-    print(f">> windows: {len(ds['train']):,} train / {len(ds['val']):,} val / "
+    log(f">> windows: {len(ds['train']):,} train / {len(ds['val']):,} val / "
           f"{len(ds['test']):,} test  (split by file)")
 
     real_bench = None
     if args.real_bench_root and os.path.exists(args.real_bench_root):
         real_bench = RealBenchEval(args.real_bench_root)
-        print(f'>> real-bench: {len(real_bench.examples)} files from '
+        log(f'>> real-bench: {len(real_bench.examples)} files from '
               f'{args.real_bench_root} -- checkpoint selection uses this, not val')
     elif args.real_bench_root:
-        print(f'>> real-bench root {args.real_bench_root} not found -- '
+        log(f'>> real-bench root {args.real_bench_root} not found -- '
               f'falling back to val-only checkpoint selection')
 
     train_lang_counts = np.bincount(ds['train'].langs, minlength=len(TARGET_LANGUAGES))
@@ -431,16 +498,22 @@ def main() -> None:
         return per_lang[ds['train'].langs] * construct_mult
 
     base_per_window_weight = window_weights(desired)
-    train_sampler = WeightedRandomSampler(
-        torch.from_numpy(base_per_window_weight).double(),
-        num_samples=len(ds['train']), replacement=True,
-        generator=torch.Generator().manual_seed(args.seed))
+    sampler_weights = torch.from_numpy(base_per_window_weight).double()
+    if world_size > 1:
+        train_sampler = DistributedWeightedSampler(
+            sampler_weights, len(ds['train']), rank, world_size, args.seed)
+        val_sampler = DistributedEvalSampler(len(ds['val']), rank, world_size)
+    else:
+        train_sampler = WeightedRandomSampler(
+            sampler_weights, num_samples=len(ds['train']), replacement=True,
+            generator=torch.Generator().manual_seed(args.seed))
+        val_sampler = None
     active_names = [lang for lang, p in zip(TARGET_LANGUAGES, desired) if p > 0]
     excluded = sorted(set(TARGET_LANGUAGES) - set(active_names))
-    print(f">> sampler: {args.sampler}, {len(active_names)} training languages, "
+    log(f">> sampler: {args.sampler}, {len(active_names)} training languages, "
           f"exponent {exponent:.2f}, construct boost {args.construct_boost:.2f}")
     if excluded:
-        print(f">> training exclusions (still evaluated): {', '.join(excluded)}")
+        log(f">> training exclusions (still evaluated): {', '.join(excluded)}")
 
     loader_kwargs = {
         'num_workers': args.workers,
@@ -452,14 +525,14 @@ def main() -> None:
     train_loader = DataLoader(ds['train'], batch_size=args.batch_size,
                               sampler=train_sampler, drop_last=True, **loader_kwargs)
     val_loader = DataLoader(ds['val'], batch_size=args.batch_size,
-                            **loader_kwargs)
+                            sampler=val_sampler, **loader_kwargs)
 
     resume_ck = None
     if args.resume:
         resume_ck = torch.load(args.resume, map_location=device, weights_only=False)
         model = NeuralLexer(LexerConfig(**resume_ck['config'])).to(device)
         model.load_state_dict(resume_ck['model_state_dict'])
-        print(f">> resumed {args.resume} (was weighted {100 * resume_ck['weighted']:.2f}%)")
+        log(f">> resumed {args.resume} (was weighted {100 * resume_ck['weighted']:.2f}%)")
     else:
         depth = args.n_layers or LexerConfig().n_layers
         model = NeuralLexer(LexerConfig(film_rank=args.film_rank, erase_rank=args.erase_rank,
@@ -475,7 +548,7 @@ def main() -> None:
     size = model.size_report()
     if not args.full_precision and args.weight_budget and size['packed_bytes'] > args.weight_budget:
         raise ValueError(f"packed weights {size['packed_bytes']} exceed budget {args.weight_budget}")
-    print(f">> model: {size['total_parameters']:,} params, "
+    log(f">> model: {size['total_parameters']:,} params, "
           f"{size['packed_kb']:.2f} KB packed (gpu-lexer: 41,321 params, 31.0 KB)")
 
     bench_root = Path(args.real_bench_root) if args.real_bench_root else None
@@ -507,9 +580,15 @@ def main() -> None:
                             if npm_manifest.exists() else None),
             'npm_dist_sha256': sha256_file(npm_dist),
         },
+        'distributed': {
+            'world_size': world_size,
+            'batch_size_per_gpu': args.batch_size,
+            'global_batch_size': args.batch_size * world_size,
+        },
     }
-    with open(os.path.join(args.out_dir, 'run_manifest.json'), 'w') as handle:
-        json.dump(run_manifest, handle, indent=2)
+    if is_main:
+        with open(os.path.join(args.out_dir, 'run_manifest.json'), 'w') as handle:
+            json.dump(run_manifest, handle, indent=2)
 
     cw = class_weights(meta['label_counts'], device)
     criterion = BoundaryWeightedCrossEntropy(cw, boundary_boost=args.boundary_boost)
@@ -531,11 +610,11 @@ def main() -> None:
                     'teacher logit cache was generated from a different dataset; '
                     'rerun cache_teacher_logits.py')
         else:
-            print(f'>> warning: {cache_meta_path} is missing; cache provenance '
-                  'cannot be verified')
+            log(f'>> warning: {cache_meta_path} is missing; cache provenance '
+                'cannot be verified')
         ds['train'].teacher_logits = cached_logits
-        print(f'>> distilling from cached logits {args.teacher_logits} '
-              f'(weight {args.distill_weight}, temperature {args.distill_temperature})')
+        log(f'>> distilling from cached logits {args.teacher_logits} '
+            f'(weight {args.distill_weight}, temperature {args.distill_temperature})')
     elif args.teacher_checkpoint:
         teacher_ck = torch.load(args.teacher_checkpoint, map_location=device, weights_only=False)
         teacher = NeuralLexer(LexerConfig(**teacher_ck['config'])).to(device)
@@ -544,16 +623,16 @@ def main() -> None:
         teacher.set_quant(False)
         for parameter in teacher.parameters():
             parameter.requires_grad_(False)
-        print(f'>> distilling from {args.teacher_checkpoint} '
-              f'(weight {args.distill_weight}, temperature {args.distill_temperature})')
+        log(f'>> distilling from {args.teacher_checkpoint} '
+            f'(weight {args.distill_weight}, temperature {args.distill_temperature})')
 
     if args.compile_mode != 'none' and device.type == 'cuda':
         model.compile(mode=args.compile_mode)
         if teacher is not None:
             teacher.compile(mode=args.compile_mode)
-        print(f'>> torch.compile: {args.compile_mode}')
+        log(f'>> torch.compile: {args.compile_mode}')
     elif args.compile_mode != 'none':
-        print(f'>> torch.compile: disabled because {device.type} is not CUDA')
+        log(f'>> torch.compile: disabled because {device.type} is not CUDA')
 
     # Training-only auxiliary heads. Their parameters are optimized alongside the
     # model but are never part of it.
@@ -562,13 +641,24 @@ def main() -> None:
     struct_head = nn.Linear(model.cfg.dim, NUM_STRUCT_BITS).to(device)
     struct_criterion = nn.BCEWithLogitsLoss()
 
+    train_model: nn.Module = model
+    if world_size > 1:
+        ddp_kwargs = {'device_ids': [local_rank], 'output_device': local_rank}
+        if device.type != 'cuda':
+            ddp_kwargs = {}
+        train_model = DistributedDataParallel(model, **ddp_kwargs)
+        if args.lang_loss > 0:
+            lang_head = DistributedDataParallel(lang_head, **ddp_kwargs)
+        if args.struct_loss > 0:
+            struct_head = DistributedDataParallel(struct_head, **ddp_kwargs)
+
     steps_per_epoch = args.max_steps or len(train_loader)
     total_steps = steps_per_epoch * args.epochs
     optimizer_args = {'lr': args.lr, 'weight_decay': 0.01}
     if args.fused_optimizer and device.type == 'cuda':
         optimizer_args['fused'] = True
     elif args.fused_optimizer:
-        print(f'>> fused AdamW: disabled because {device.type} is not CUDA')
+        log(f'>> fused AdamW: disabled because {device.type} is not CUDA')
     opt = torch.optim.AdamW(
         list(model.parameters()) + list(lang_head.parameters()) + list(struct_head.parameters()),
         **optimizer_args)
@@ -590,13 +680,15 @@ def main() -> None:
         # comparable to real-bench selection; re-baseline against the real
         # bench once instead of starting from an unrelated number.
         best = real_bench.evaluate(model, device)['weighted']
-        print(f'>> resumed checkpoint scores {100 * best:.2f}% on the real bench')
+        log(f'>> resumed checkpoint scores {100 * best:.2f}% on the real bench')
     else:
         best = resume_ck['weighted']
     history = []
     for epoch in range(1, args.epochs + 1):
+        if isinstance(train_sampler, DistributedWeightedSampler):
+            train_sampler.set_epoch(epoch)
         quant = not args.full_precision and (resume_ck is not None or epoch > args.warmup_epochs)
-        model.train()
+        train_model.train()
         model.set_quant(quant)
         t0 = time.time()
         run_loss = torch.zeros((), dtype=torch.float32, device=device)
@@ -616,7 +708,7 @@ def main() -> None:
             want_struct = args.struct_loss > 0
             opt.zero_grad(set_to_none=True)
             with autocast_context(device, amp_dtype):
-                out = model(feats, valid, return_signature=want_sig or want_struct)
+                out = train_model(feats, valid, return_signature=want_sig or want_struct)
                 logits, sig, token_repr = out if (want_sig or want_struct) else (out, None, None)
                 loss = criterion(logits, labels)
                 cached_teacher = batch.get('teacher_logits')
@@ -667,13 +759,17 @@ def main() -> None:
                 hit += ((logits.argmax(-1) == labels) & m).sum()
                 tot += m.sum()
             if step % 200 == 0:
-                print(f'   epoch {epoch} step {step}/{steps_per_epoch} '
-                      f'loss {(run_loss / (step + 1)).item():.4f} '
-                      f'acc {(100 * hit / tot.clamp_min(1)).item():.1f}%',
-                      flush=True)
+                log(f'   epoch {epoch} step {step}/{steps_per_epoch} '
+                    f'loss {(run_loss / (step + 1)).item():.4f} '
+                    f'acc {(100 * hit / tot.clamp_min(1)).item():.1f}%',
+                    flush=True)
 
         val = evaluate(model, val_loader, device, criterion,
                        quantized=not args.full_precision, amp_dtype=amp_dtype)
+        if dist.is_initialized():
+            for value in (run_loss, run_aux, run_struct, aux_hit, aux_tot,
+                          struct_hit, struct_tot, hit, tot):
+                dist.all_reduce(value, op=dist.ReduceOp.SUM)
         mode = 'FP teacher' if args.full_precision else ('1-bit QAT' if quant else 'FP warmup')
         # The auxiliary language accuracy is reported because the FiLM
         # conditioning downstream is only as good as the signature it reads.
@@ -690,14 +786,14 @@ def main() -> None:
                          f'micro {100 * bench_result["micro"]:.2f}% '
                          f'boundary {100 * bench_result["boundary_f1"]:.2f}%')
 
-        print(f'Epoch {epoch:2d}/{args.epochs} [{mode}] {time.time() - t0:.0f}s '
-              f'train_loss {(run_loss / steps_per_epoch).item():.4f} '
-              f'train_acc {(100 * hit / tot.clamp_min(1)).item():.1f}%{aux_str}{struct_str} | '
-                       f'val_loss {val["loss"]:.4f} '
-                      f'WEIGHTED {100 * val["weighted"]:.2f}% macro {100 * val["macro"]:.2f}% '
-                      f'micro {100 * val["micro"]:.2f}% '
-                      f'boundary {100 * val["boundary_f1"]:.2f}%{bench_str}',
-              flush=True)
+        log(f'Epoch {epoch:2d}/{args.epochs} [{mode}] {time.time() - t0:.0f}s '
+            f'train_loss {(run_loss / (steps_per_epoch * world_size)).item():.4f} '
+            f'train_acc {(100 * hit / tot.clamp_min(1)).item():.1f}%{aux_str}{struct_str} | '
+            f'val_loss {val["loss"]:.4f} '
+            f'WEIGHTED {100 * val["weighted"]:.2f}% macro {100 * val["macro"]:.2f}% '
+            f'micro {100 * val["micro"]:.2f}% '
+            f'boundary {100 * val["boundary_f1"]:.2f}%{bench_str}',
+            flush=True)
         history.append({'epoch': epoch, 'quant': quant,
                         **{k: v for k, v in val.items() if k != 'per_lang'},
                         **({'real_bench_weighted': bench_result['weighted'],
@@ -710,7 +806,7 @@ def main() -> None:
                                              args.include_excluded_languages)
             base_per_window_weight = window_weights(desired)
             train_sampler.weights = torch.from_numpy(base_per_window_weight).double()
-            print('   sampler: switched to natural benchmark calibration weights')
+            log('   sampler: switched to natural benchmark calibration weights')
 
         if args.mine_weak_languages:
             lang_index = {l: i for i, l in enumerate(TARGET_LANGUAGES)}
@@ -725,8 +821,8 @@ def main() -> None:
             worst = sorted(
                 ((lang, acc) for lang, acc in val['per_lang'].items() if lang in active),
                 key=lambda kv: kv[1])[:5]
-            print(f"   mining: boosted active languages "
-                  f"{', '.join(f'{l} ({100 * a:.0f}%)' for l, a in worst)}")
+            log(f"   mining: boosted active languages "
+                f"{', '.join(f'{l} ({100 * a:.0f}%)' for l, a in worst)}")
 
         # Only checkpoint from the quantized regime: a full-precision model that
         # scores well says nothing about what ships. Selection uses the real
@@ -735,19 +831,28 @@ def main() -> None:
         selection_score = bench_result['weighted'] if bench_result is not None else val['weighted']
         if (quant or args.full_precision) and selection_score > best:
             best = selection_score
-            torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(),
-                        'weighted': val['weighted'], 'micro': val['micro'],
-                        'per_lang': val['per_lang'], 'per_class': val['per_class'],
-                        'real_bench_weighted': bench_result['weighted'] if bench_result else None,
-                        'real_bench_micro': bench_result['micro'] if bench_result else None,
-                        'train_args': vars(args),
-                        'config': vars(model.cfg)},
-                       os.path.join(args.out_dir, 'best_model.pt'))
-            label = 'real-bench' if bench_result is not None else 'val'
-            print(f'   -> saved best ({label} {100 * best:.2f}%)')
+            if is_main:
+                torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(),
+                            'weighted': val['weighted'], 'micro': val['micro'],
+                            'per_lang': val['per_lang'], 'per_class': val['per_class'],
+                            'real_bench_weighted': bench_result['weighted'] if bench_result else None,
+                            'real_bench_micro': bench_result['micro'] if bench_result else None,
+                            'train_args': vars(args),
+                            'config': vars(model.cfg)},
+                           os.path.join(args.out_dir, 'best_model.pt'))
+                label = 'real-bench' if bench_result is not None else 'val'
+                log(f'   -> saved best ({label} {100 * best:.2f}%)')
 
-    with open(os.path.join(args.out_dir, 'history.json'), 'w') as fh:
-        json.dump(history, fh, indent=2)
+    if is_main:
+        with open(os.path.join(args.out_dir, 'history.json'), 'w') as fh:
+            json.dump(history, fh, indent=2)
+
+    if dist.is_initialized():
+        dist.barrier()
+
+    if not is_main:
+        dist.destroy_process_group()
+        return
 
     best_ckpt_path = os.path.join(args.out_dir, 'best_model.pt')
     if os.path.exists(best_ckpt_path):
@@ -756,9 +861,11 @@ def main() -> None:
             model = NeuralLexer(LexerConfig(**ck['config'])).to(device)
         model.load_state_dict(ck['model_state_dict'], strict=False)
     rep = export.export_model(model, args.out_dir)
-    print(f"\n>> exported {rep['kb']:.2f} KB, round-trip max error {rep['max_abs_error']:.2e}")
+    log(f"\n>> exported {rep['kb']:.2f} KB, round-trip max error {rep['max_abs_error']:.2e}")
     label = 'real-bench weighted accuracy' if real_bench is not None else 'weighted agreement with Shiki (val)'
-    print(f">> best {label}: {100 * best:.2f}% (gpu-lexer's own Prism.js reference: 84.19%)")
+    log(f">> best {label}: {100 * best:.2f}% (gpu-lexer's own Prism.js reference: 84.19%)")
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == '__main__':
