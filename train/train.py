@@ -405,6 +405,14 @@ def main() -> None:
                          'takes precedence over live teacher inference')
     ap.add_argument('--distill-weight', type=float, default=0.2)
     ap.add_argument('--distill-temperature', type=float, default=2.0)
+    ap.add_argument('--teacher-folds', type=int, default=0,
+                    help='cross-fitting: split train files into this many folds and train '
+                         'only on --teacher-fold, so cache_teacher_logits.py can give every '
+                         'window logits from a teacher that never trained on it. 0 = all data')
+    ap.add_argument('--teacher-fold', type=int, default=0)
+    ap.add_argument('--dropout', type=float, default=0.0,
+                    help='residual-branch and head dropout; intended for the FP teacher')
+    ap.add_argument('--weight-decay', type=float, default=0.01)
     ap.add_argument('--full-precision', action='store_true',
                     help='train and select a non-shipping float teacher without QAT')
     ap.add_argument('--seed', type=int, default=20260911)
@@ -487,7 +495,19 @@ def main() -> None:
         log(f'>> real-bench root {args.real_bench_root} not found -- '
               f'falling back to val-only checkpoint selection')
 
-    train_lang_counts = np.bincount(ds['train'].langs, minlength=len(TARGET_LANGUAGES))
+    in_fold = np.ones(len(ds['train']), dtype=bool)
+    if args.teacher_folds > 1:
+        if not args.full_precision:
+            raise ValueError('--teacher-folds trains cross-fitted FP teachers; add --full-precision')
+        if not 0 <= args.teacher_fold < args.teacher_folds:
+            raise ValueError(f'--teacher-fold must be in [0, {args.teacher_folds})')
+        folds = dp.teacher_folds(ds['train'], args.teacher_folds)
+        in_fold = (folds == args.teacher_fold) | (folds < 0)
+        log(f">> teacher fold {args.teacher_fold}/{args.teacher_folds}: "
+            f"{int(in_fold.sum()):,} of {len(ds['train']):,} train windows "
+            f"({int((folds < 0).sum()):,} shared)")
+    n_train_samples = int(in_fold.sum())
+    train_lang_counts = np.bincount(ds['train'].langs[in_fold], minlength=len(TARGET_LANGUAGES))
     exponent = 0.0 if args.sampler == 'equal' else args.sampling_exponent
     desired = sampling_probabilities(real_bench, exponent, args.tail_floor,
                                      args.include_excluded_languages)
@@ -495,17 +515,17 @@ def main() -> None:
 
     def window_weights(language_probs: np.ndarray) -> np.ndarray:
         per_lang = language_probs / np.maximum(train_lang_counts, 1)
-        return per_lang[ds['train'].langs] * construct_mult
+        return per_lang[ds['train'].langs] * construct_mult * in_fold
 
     base_per_window_weight = window_weights(desired)
     sampler_weights = torch.from_numpy(base_per_window_weight).double()
     if world_size > 1:
         train_sampler = DistributedWeightedSampler(
-            sampler_weights, len(ds['train']), rank, world_size, args.seed)
+            sampler_weights, n_train_samples, rank, world_size, args.seed)
         val_sampler = DistributedEvalSampler(len(ds['val']), rank, world_size)
     else:
         train_sampler = WeightedRandomSampler(
-            sampler_weights, num_samples=len(ds['train']), replacement=True,
+            sampler_weights, num_samples=n_train_samples, replacement=True,
             generator=torch.Generator().manual_seed(args.seed))
         val_sampler = None
     active_names = [lang for lang, p in zip(TARGET_LANGUAGES, desired) if p > 0]
@@ -544,7 +564,8 @@ def main() -> None:
                                         embedding_scale=args.embedding_scale,
                                         binary_ste=args.binary_ste, n_layers=depth,
                                         dilations=tuple(2 ** i for i in range(depth)),
-                                        kernel_size=args.kernel_size)).to(device)
+                                        kernel_size=args.kernel_size,
+                                        dropout=args.dropout)).to(device)
     size = model.size_report()
     if not args.full_precision and args.weight_budget and size['packed_bytes'] > args.weight_budget:
         raise ValueError(f"packed weights {size['packed_bytes']} exceed budget {args.weight_budget}")
@@ -654,7 +675,7 @@ def main() -> None:
 
     steps_per_epoch = args.max_steps or len(train_loader)
     total_steps = steps_per_epoch * args.epochs
-    optimizer_args = {'lr': args.lr, 'weight_decay': 0.01}
+    optimizer_args = {'lr': args.lr, 'weight_decay': args.weight_decay}
     if args.fused_optimizer and device.type == 'cuda':
         optimizer_args['fused'] = True
     elif args.fused_optimizer:
@@ -801,7 +822,8 @@ def main() -> None:
                            if bench_result is not None else {})})
 
         calibration_start = max(1, math.ceil(args.epochs * (1.0 - args.calibration_fraction)))
-        if args.sampler == 'tempered' and epoch == calibration_start:
+        if (args.sampler == 'tempered' and args.calibration_fraction > 0
+                and epoch == calibration_start):
             desired = sampling_probabilities(real_bench, 1.0, args.tail_floor,
                                              args.include_excluded_languages)
             base_per_window_weight = window_weights(desired)

@@ -60,17 +60,23 @@ runpy.run_path(target, run_name='__main__')
             args = json.loads(output)
             get = lambda flag: args[args.index(flag) + 1]
             self.assertEqual(get('--kernel-size'), '5' if overrides else '7')
-            self.assertEqual(get('--erase-rank'), '32')
+            teacher = entry == 'train_teacher.py'
+            self.assertEqual(get('--erase-rank'), '64' if teacher else '32')
             self.assertEqual(get('--n-layers'), '4')
             self.assertEqual(get('--compile-mode'), 'none')
-            if entry == 'train_teacher.py':
+            if teacher:
                 self.assertIn('--full-precision', args)
-                self.assertEqual(get('--dim'), '192')
+                self.assertEqual(get('--dim'), '256')
+                self.assertEqual(get('--dropout'), '0.1')
+                self.assertEqual(get('--weight-decay'), '0.05')
+                self.assertEqual(get('--calibration-fraction'), '0')
                 self.assertEqual(get('--weight-budget'), '0')
                 self.assertEqual(get('--teacher-logits'), '')
             else:
                 self.assertEqual([get(f) for f in ('--input-bits', '--head-bits', '--output-bits')], ['3', '2', '3'])
                 self.assertEqual(get('--weight-budget'), '111000')
+                self.assertEqual(get('--epochs'), '64')
+                self.assertEqual(get('--distill-weight'), '0.5')
                 self.assertEqual('--binary-ste' in args, not bool(overrides))
 
         ddp_env = dict(os.environ, WORLD_SIZE='4')

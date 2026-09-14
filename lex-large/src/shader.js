@@ -239,17 +239,35 @@ fn tile_rms(d: u32, n: u32) {
 }
 
 
-fn dotQA(base: u32, wpp: u32, bits: u32, row: u32, act: u32, width: u32) -> f32 {
+// The mixed-precision tensors use fixed bit widths. Keeping the bit count out
+// of the inner loop lets Tint unroll the two/three plane loads and removes the
+// generic wgt() loop and bits==1 branch from the largest matmuls.
+fn wgt2(base: u32, wpp: u32, idx: u32) -> f32 {
+    let w = idx >> 5u;
+    let b = idx & 31u;
+    let c = ((planes[base + w] >> b) & 1u)
+          | (((planes[base + wpp + w] >> b) & 1u) << 1u);
+    return f32(c) - 2.0;
+}
+fn wgt3(base: u32, wpp: u32, idx: u32) -> f32 {
+    let w = idx >> 5u;
+    let b = idx & 31u;
+    let c = ((planes[base + w] >> b) & 1u)
+          | (((planes[base + wpp + w] >> b) & 1u) << 1u)
+          | (((planes[base + 2u * wpp + w] >> b) & 1u) << 2u);
+    return f32(c) - 4.0;
+}
+fn dotQ3A(base: u32, wpp: u32, row: u32, act: u32, width: u32) -> f32 {
     var value = 0.0;
     for (var k = 0u; k < width; k = k + 1u) {
-        value = value + wgt(base, wpp, bits, row + k, 1.0) * tA[act + k];
+        value = value + wgt3(base, wpp, row + k) * tA[act + k];
     }
     return value;
 }
-fn dotQB(base: u32, wpp: u32, bits: u32, row: u32, act: u32, width: u32) -> f32 {
+fn dotQ2B(base: u32, wpp: u32, row: u32, act: u32, width: u32) -> f32 {
     var value = 0.0;
     for (var k = 0u; k < width; k = k + 1u) {
-        value = value + wgt(base, wpp, bits, row + k, 1.0) * tB[act + k];
+        value = value + wgt2(base, wpp, row + k) * tB[act + k];
     }
     return value;
 }
@@ -289,13 +307,12 @@ fn embed(@builtin(local_invocation_id) lid: vec3<u32>,
                     // bucket 0 into every symbol would alias them together.
                     if ((f == 4u || f == 5u) && kind != 0u) { continue; }
                     let row = FIELD_ROW[f] + field_id(off, t, f);
-                    acc = acc + wgt(EMB_P, EMB_W, EMB_B, row * EDIM + d, fp[EMB_S + f]);
+                    acc = acc + wgt3(EMB_P, EMB_W, row * EDIM + d) * fp[EMB_S + f];
                 }
                 let flags = tok_flags(off, t);
                 for (var b: u32 = 0u; b < NFLAG; b = b + 1u) {
                     if (((flags >> b) & 1u) == 1u) {
-                        acc = acc + wgt(EMB_P, EMB_W, EMB_B,
-                                        (FLAG_ROW + b) * EDIM + d, fp[EMB_S + NFIELD]);
+                        acc = acc + wgt3(EMB_P, EMB_W, (FLAG_ROW + b) * EDIM + d) * fp[EMB_S + NFIELD];
                     }
                 }
             }
@@ -306,7 +323,7 @@ fn embed(@builtin(local_invocation_id) lid: vec3<u32>,
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
         let t = base_t + j;
         if (t < T) {
-            let v = up_b + up_s * dotQA(UP_P, UP_W, UP_B, d * EDIM, j * EDIM, EDIM);
+            let v = up_b + up_s * dotQ3A(UP_P, UP_W, d * EDIM, j * EDIM, EDIM);
             hid[hbase + t * DIM + d] = v;
             scratch[r_xorig + t * DIM + d] = v;
         }
@@ -1336,11 +1353,11 @@ fn head(@builtin(local_invocation_id) lid: vec3<u32>,
     }
     workgroupBarrier();
     for (var j: u32 = 0u; j < TILE; j = j + 1u) {
-        let a0 = fp[HH_BI + o0] + fp[HH_S + o0] * dotQB(HH_P, HH_W, HH_B, o0 * 2u * DIM, j * 2u * DIM, 2u * DIM);
+        let a0 = fp[HH_BI + o0] + fp[HH_S + o0] * dotQ2B(HH_P, HH_W, o0 * 2u * DIM, j * 2u * DIM, 2u * DIM);
         let c0 = 0.7978845608 * (a0 + 0.044715 * a0 * a0 * a0);
         tA[j * HEAD_HIDDEN + o0] = 0.5 * a0 * (1.0 + tanh_s(c0));
         if (o1 < HEAD_HIDDEN) {
-            let a1 = fp[HH_BI + o1] + fp[HH_S + o1] * dotQB(HH_P, HH_W, HH_B, o1 * 2u * DIM, j * 2u * DIM, 2u * DIM);
+            let a1 = fp[HH_BI + o1] + fp[HH_S + o1] * dotQ2B(HH_P, HH_W, o1 * 2u * DIM, j * 2u * DIM, 2u * DIM);
             let c1 = 0.7978845608 * (a1 + 0.044715 * a1 * a1 * a1);
             tA[j * HEAD_HIDDEN + o1] = 0.5 * a1 * (1.0 + tanh_s(c1));
         }
@@ -1349,7 +1366,7 @@ fn head(@builtin(local_invocation_id) lid: vec3<u32>,
     if (d < NCLASS) {
         for (var j: u32 = 0u; j < TILE; j = j + 1u) {
             lg[j * NCLASS + d] = fp[HO_BI + d] + fp[HO_S + d]
-                * dotQA(HO_P, HO_W, HO_B, d * HEAD_HIDDEN, j * HEAD_HIDDEN, HEAD_HIDDEN);
+                * dotQ3A(HO_P, HO_W, d * HEAD_HIDDEN, j * HEAD_HIDDEN, HEAD_HIDDEN);
         }
     }
     workgroupBarrier();

@@ -149,6 +149,51 @@ class LexerDataset(Dataset):
         return item
 
 
+def file_groups(ds: LexerDataset, seq_len: int = 512) -> np.ndarray:
+    """Group id per window, where every group is one or more whole source files.
+
+    The cache stores no file ids, but build() appends each file's chunks
+    contiguously and only a file's final chunk can be shorter than seq_len. So a
+    short window or a language change always ends a file. A file whose last
+    chunk is exactly seq_len long merges with the next file of the same
+    language -- groups can over-merge but never split a file, which is the
+    property cross-fitting needs.
+    """
+    lengths = np.diff(ds.offsets)
+    new = np.ones(len(ds), dtype=bool)
+    if len(ds) > 1:
+        new[1:] = (lengths[:-1] < seq_len) | (ds.langs[1:] != ds.langs[:-1])
+    return np.cumsum(new) - 1
+
+
+def teacher_folds(ds: LexerDataset, n_folds: int = 2, min_groups: int = 4,
+                  seq_len: int = 512) -> np.ndarray:
+    """Fold id per training window for cross-fitted teachers; -1 means shared.
+
+    Whole file groups are assigned greedily to the fold holding the fewest of
+    that language's windows so far, so every fold sees every language in about
+    equal measure. A language with fewer than `min_groups` groups cannot be
+    split without starving one fold of it entirely, so its windows are shared:
+    every fold trains on them and their cached logits are not held out.
+    """
+    groups = file_groups(ds, seq_len)
+    starts = np.flatnonzero(np.r_[True, groups[1:] != groups[:-1]])
+    sizes = np.diff(np.r_[starts, len(ds)])
+    group_langs = ds.langs[starts]
+    group_fold = np.full(len(starts), -1, dtype=np.int8)
+    n_groups_per_lang = np.bincount(group_langs)
+    load = np.zeros((len(n_groups_per_lang), n_folds), dtype=np.int64)
+    # Largest groups first, so the greedy balance is not decided by the tail.
+    for g in np.argsort(-sizes, kind='stable'):
+        lang = group_langs[g]
+        if n_groups_per_lang[lang] < min_groups:
+            continue
+        fold = int(np.argmin(load[lang]))
+        group_fold[g] = fold
+        load[lang, fold] += sizes[g]
+    return np.repeat(group_fold, sizes)
+
+
 def _chunk(arrays: dict[str, np.ndarray], labels: np.ndarray, lang_id: int,
            seq_len: int, min_len: int) -> list[dict]:
     T = len(labels)

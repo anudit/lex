@@ -30,6 +30,8 @@ LexerDataset = _base.LexerDataset
 decode_rle = _base.decode_rle
 align = _base.align
 split_of = _base.split_of
+file_groups = _base.file_groups
+teacher_folds = _base.teacher_folds
 
 
 def build(*args, total_tokens: int | None = None, **kwargs):

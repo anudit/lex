@@ -37,7 +37,9 @@ def main() -> None:
         '--dataset': './corpus/dataset',
         '--total-tokens': '160000000',
         '--out-dir': './checkpoints_student',
-        '--epochs': '48',
+        # Both 48-epoch runs selected their final epoch with val loss still
+        # falling, so the QAT phase was cut short rather than converged.
+        '--epochs': '64',
         '--warmup-epochs': '6',
         # Keep the historical global batch at 64 under torchrun. --batch-size
         # is per process/GPU in the shared DDP trainer.
@@ -67,6 +69,10 @@ def main() -> None:
         '--calibration-fraction': '0.167',
         '--lang-loss': '0.15',
         '--struct-loss': '0.2',
+        # 0.2 was set when logits came from a teacher scoring its own training
+        # windows. Cross-fitted (held-out) logits are worth leaning on harder.
+        '--distill-weight': '0.5',
+        '--distill-temperature': '2.0',
         '--seed': '20260911',
         '--weight-budget': '111000',
         # The old external set covers only 57 languages. An empty root makes the

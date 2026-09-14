@@ -127,7 +127,9 @@ def export_model(model: NeuralLexer, out_dir: str, verify: bool = True) -> dict:
     meta = {
         'format': 'neural-lexer-v2',
         'config': {
-            **asdict(cfg),
+            # Dropout is training-only; keeping it out leaves exported metadata
+            # byte-identical to pre-dropout exports.
+            **{k: v for k, v in asdict(cfg).items() if k != 'dropout'},
             'dim': cfg.dim, 'embed_dim': cfg.embed_dim, 'n_layers': cfg.n_layers,
             'kernel_size': cfg.kernel_size, 'head_hidden': cfg.head_hidden,
             'num_classes': cfg.num_classes,

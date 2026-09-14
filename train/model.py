@@ -100,6 +100,10 @@ class LexerConfig:
     use_dynamic_reset: bool = True   # state-dependent decay reset
     use_decl_gate: bool = True       # declaration-biased prefix in GlobalContext
     use_highway: bool = True         # embedding-to-head direct highway
+    # Training-only regularization for the unconstrained FP teacher. Applied to
+    # each residual branch and the classifier's hidden layer; inactive in eval()
+    # and absent from exports, so it never changes what ships.
+    dropout: float = 0.0
 
     def rows(self) -> int:
         return sum(FIELD_SIZES.values()) + N_FLAG_BITS
@@ -290,6 +294,7 @@ class BidiGLUBlock(nn.Module):
         self.proj_in = QuantLinear(d, d * 2, bits=cfg.proj_bits)
         self.proj_out = QuantLinear(d * 2, d, bits=cfg.proj_bits)
         self.out_gate = nn.Parameter(torch.zeros(d))
+        self.dropout = getattr(cfg, 'dropout', 0.0)
         self.erase_rank = getattr(cfg, 'erase_rank', 0)
         if self.erase_rank > 0:
             self.erase_down = QuantLinear(d, self.erase_rank, bits=cfg.proj_bits)
@@ -359,6 +364,8 @@ class BidiGLUBlock(nn.Module):
         bwd = assoc_scan(a_b.flip(1), b.flip(1)).flip(1)
 
         y = self.proj_out(torch.cat([fwd, bwd], dim=-1))
+        if self.dropout > 0:
+            y = F.dropout(y, self.dropout, self.training)
         return x + y * torch.sigmoid(self.out_gate)
 
 
@@ -402,6 +409,8 @@ class NeuralLexer(nn.Module):
         else:
             token_repr = self.head_norm(x)
         h = F.gelu(self.head_hidden(torch.cat([token_repr, ctx], dim=-1)))
+        if self.cfg.dropout > 0:
+            h = F.dropout(h, self.cfg.dropout, self.training)
         logits = self.head_out(h)
         # The auxiliary language head reads `sig` (the pooled document signature);
         # the auxiliary structural-state head in the trainer reads `token_repr`

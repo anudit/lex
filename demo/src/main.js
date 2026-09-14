@@ -231,16 +231,16 @@ function renderCorrectness(rows, label, nFiles, present, group) {
 // machine viewing the page.
 
 const SNIPPETS = [
-  'export async function fetchUsers(ids = []) {\n  const MAX = 3.14;\n  return ids.map((id) => `#${id}`); // done\n}',
-  'def total(xs):\n    """Sum them."""\n    return sum(xs) + MAX_N',
-  'pub fn counts(t: &str) -> HashMap<&str, usize> {\n    let mut m = HashMap::new();  // tally\n    m\n}',
-  'SELECT u.id, COUNT(o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id;',
-  ':root { --brand: #0b7285; }\n.card:hover { border-radius: 8px; }',
-  'package main\n\nimport "fmt"\n\nfunc main() { fmt.Println(42) }',
-  'public final class Cache<K, V> {\n  private static final int MAX = 1024;\n}',
-  'apiVersion: apps/v1\nkind: Deployment\nspec:\n  replicas: 3',
-  '# Title\n\nSome **prose** with `code` and a [link](http://x).',
-  'const x: Record<string, number> = { a: 1 };',
+  { lang: 'javascript', code: 'export async function fetchUsers(ids = []) {\n  const MAX = 3.14;\n  return ids.map((id) => `#${id}`); // done\n}' },
+  { lang: 'python', code: 'def total(xs):\n    """Sum them."""\n    return sum(xs) + MAX_N' },
+  { lang: 'rust', code: 'pub fn counts(t: &str) -> HashMap<&str, usize> {\n    let mut m = HashMap::new();  // tally\n    m\n}' },
+  { lang: 'sql', code: 'SELECT u.id, COUNT(o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id;' },
+  { lang: 'css', code: ':root { --brand: #0b7285; }\n.card:hover { border-radius: 8px; }' },
+  { lang: 'go', code: 'package main\n\nimport "fmt"\n\nfunc main() { fmt.Println(42) }' },
+  { lang: 'java', code: 'public final class Cache<K, V> {\n  private static final int MAX = 1024;\n}' },
+  { lang: 'yaml', code: 'apiVersion: apps/v1\nkind: Deployment\nspec:\n  replicas: 3' },
+  { lang: 'markdown', code: '# Title\n\nSome **prose** with `code` and a [link](http://x).' },
+  { lang: 'typescript', code: 'const x: Record<string, number> = { a: 1 };' },
 ];
 const WARMUP = 5;
 const ITERATIONS = 25;
@@ -259,17 +259,17 @@ async function runLatency() {
   const rows = [];
   for (const a of engines) {
     const call = a.classesAsync
-      ? (code) => a.classesAsync(code)
-      : (code) => a.classes(code, 'javascript');
+      ? ({ code }) => a.classesAsync(code)
+      : ({ code, lang }) => a.classes(code, lang);
     try {
       for (const c of SNIPPETS) for (let i = 0; i < WARMUP; i++) await call(c);
     } catch { continue; }
     const per = [];
-    for (const code of SNIPPETS) {
+    for (const snippet of SNIPPETS) {
       const t = [];
       for (let i = 0; i < ITERATIONS; i++) {
         const s0 = performance.now();
-        await call(code);
+        await call(snippet);
         t.push(performance.now() - s0);
       }
       per.push(median(t));
@@ -277,16 +277,20 @@ async function runLatency() {
     }
     // Every call issued in one turn, which is how a real page highlights a
     // document: the WebGPU engines then share a single submit and readback.
-    const t0 = performance.now();
-    await Promise.all(SNIPPETS.map(call));
-    rows.push({ name: a.name, median: median(per), batch: performance.now() - t0 });
+    const batches = [];
+    for (let i = 0; i < ITERATIONS; i++) {
+      const t0 = performance.now();
+      await Promise.all(SNIPPETS.map(call));
+      batches.push(performance.now() - t0);
+    }
+    rows.push({ name: a.name, median: median(per), batch: median(batches) });
   }
   rows.sort((a, b) => a.median - b.median);
 
   document.getElementById('latency').innerHTML = `
     <section>
       <div class="section-head"><h2>Latency</h2>
-        <span class="meta">median of ${ITERATIONS} iterations &middot; lower is better</span></div>
+        <span class="meta">median of ${ITERATIONS} single and batch iterations &middot; lower is better</span></div>
       <div class="scroll"><table>
         <thead><tr><th>engine</th><th>one call</th>
           <th>${SNIPPETS.length} blocks in one turn</th><th>per block</th></tr></thead>
@@ -298,9 +302,9 @@ async function runLatency() {
         </tr>`).join('')}</tbody>
       </table></div>
       <p class="note">
-        About 96% of a call is the GPU readback round-trip, and it barely varies
-        with input size &mdash; so calls issued together share one submit and one
-        readback.
+        Calls issued together share one GPU submission and readback. Per-block is
+        amortized throughput; every result in the batch arrives after the full
+        batch latency.
       </p>
     </section>`;
   setStatus(`latency done \u2014 ${rows.length} engines`);
@@ -532,4 +536,3 @@ if (playgroundInput && playgroundPre) {
   playgroundInput.value = SAMPLES.js;
   triggerHighlight();
 }
-
