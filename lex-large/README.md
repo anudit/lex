@@ -1,7 +1,7 @@
 # lex-large
 
 Syntax highlighting from a 106.77 KiB neural model running on WebGPU, covering
-193 Highlight.js grammars. This is the larger sibling of
+185 Highlight.js grammars. This is the larger sibling of
 [`lex`](../lex) (36.15 KiB, 52 languages, referred to as **lex-lite** where the
 two are compared) -- same API, same zero-dependency, no-grammar approach, more
 parameters and wider language coverage.
@@ -41,7 +41,7 @@ signature that FiLM-modulates every layer -- just wider: 96-dim hidden state
 (vs. 64), 64-dim embedding (vs. 32), 192-wide classifier head (vs. 96), and
 four recurrent layers with kernel-7 depthwise convs at dilations 1/2/4/8 (vs.
 three kernel-5 layers at 1/2/4). It
-was trained on a 193-language target set (`train_large/`) rather than `lex`'s
+was trained on a 185-language target set (`train_large/`) rather than `lex`'s
 52-language primary set, so it covers most of the Highlight.js grammar list
 rather than the top of it.
 
@@ -69,7 +69,7 @@ merged into one parametrized generator.
 Scored the same way as `lex`: agreement with [Shiki](https://shiki.style)
 over held-out files, per non-whitespace character, weighted by GitHub
 language popularity. `bun run dev` in `demo/` reproduces it, including the
-193-language corpus bench under `train_large/corpus`.
+185-language corpus bench under `train_large/corpus`.
 
 ## Performance notes
 

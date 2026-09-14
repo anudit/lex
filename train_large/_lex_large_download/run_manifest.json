@@ -10,7 +10,7 @@
     "out_dir": "./checkpoints_student",
     "workers": 8,
     "precision": "bf16",
-    "compile_mode": "max-autotune",
+    "compile_mode": "default",
     "matmul_precision": "high",
     "pin_memory": true,
     "prefetch_factor": 4,
@@ -47,7 +47,8 @@
     "n_layers": 4,
     "kernel_size": 7,
     "weight_budget": 111000,
-    "resume": ""
+    "resume": "",
+    "local_rank": 0
   },
   "model": {
     "total_parameters": 435370,
@@ -199,10 +200,10 @@
     }
   },
   "dataset": {
-    "total_tokens": 145368132,
-    "files": 100460,
+    "total_tokens": 140949410,
+    "files": 97383,
     "languages_target": 185,
-    "meta_sha256": "78c686093972384867cd85c808fc031bd8d83cf385da41715315e0ee37b519ca"
+    "meta_sha256": "5a5672b953f0475ddd84e23040cf5b0e88eae8784fca6cc138e19a3b2f6d0a3d"
   },
   "training_languages": [
     "1c",
@@ -584,5 +585,10 @@
     "popularity_sha256": null,
     "npm_version": null,
     "npm_dist_sha256": null
+  },
+  "distributed": {
+    "world_size": 1,
+    "batch_size_per_gpu": 64,
+    "global_batch_size": 64
   }
 }
