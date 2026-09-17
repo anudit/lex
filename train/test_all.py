@@ -1,19 +1,18 @@
 """
-Test suite for the neural lexer.
+Test suite for lex-lite.
 
-These assertions are chosen to fail on the bugs this project actually hit, not
-to confirm that files exist:
+Each assertion guards a way the shipped model can silently differ from the
+trained one:
 
-  * the exporter silently omitted the depthwise kernels, norms and decays, so
-    weights.bin could not reconstruct the model -> `test_export_roundtrip`
-  * the exporter wrote a different scale than the forward pass used, so the
-    shipped weights were not the trained ones -> same test, exact comparison
-  * WGSL's tanh returned NaN on large inputs and argmax silently fell back to
-    class 0 -> `test_no_nan_on_extremes`
-  * the JS and Python tokenizers could drift and the model would then see
-    features it never trained on -> `test_tokenizer_parity`
-  * a language could land entirely in the training split and be scored as 0%
-    without anyone noticing -> `test_every_language_has_val_data`
+  * weights.bin must reconstruct every tensor exactly -> `test_export_roundtrip`
+  * WGSL's tanh must saturate rather than return NaN -> `test_no_nan_on_extremes`
+  * the JS and Python tokenizers must agree bit-for-bit -> `test_tokenizer_parity`
+  * minification must keep every dispatched entry point
+    -> `test_shader_minify_keeps_entry_points`
+  * every language must have validation data, or it scores 0% unnoticed
+    -> `test_every_language_has_val_data`
+
+Browser-side parity (WGSL vs numpy reference) is demo/validate.html.
 
 Run: uv run python test_all.py
 """
@@ -37,7 +36,7 @@ import tokenizer
 import wgsl
 from labels import CLASS_NAMES, MASK, NUM_CLASSES
 from languages import TARGET_LANGUAGES, weights
-from model import FIELD_SIZES, LexerConfig, NeuralLexer
+from model import LexerConfig, NeuralLexer
 from quant import pack_bitplanes, unpack_bitplanes, quantize, row_scale
 
 HERE = Path(__file__).resolve().parent
@@ -46,7 +45,8 @@ FAILED: list[tuple[str, str]] = []
 
 
 def deployment_config() -> LexerConfig:
-    return LexerConfig(film_rank=32, erase_rank=8)
+    # lex-lite: LexerConfig's defaults are the shipped architecture.
+    return LexerConfig()
 
 
 def _fn_bodies(src: str) -> dict[str, str]:
@@ -148,7 +148,7 @@ def test_export_roundtrip():
 # The selective-reset recipe uses word-aligned FiLM rank 32 and spends the
 # reclaimed bytes on rank-8 erase projections. The hard deployment budget is
 # 40 KiB; the current exact export remains comfortably below it.
-SIZE_BUDGET_KB = 40.0
+SIZE_BUDGET_KB = 30.0
 GPU_LEXER_KB = 31.0
 
 
@@ -175,7 +175,7 @@ def test_numpy_reference_matches_torch():
     with tempfile.TemporaryDirectory() as d:
         export.export_model(m, d)
         ref = reference.Reference(d)
-        code = 'const MAX_N = 3.14; // hi\nfunction go(a) { return a; }\n'
+        code = 'const MAX_N = 3.14; // hi\nfunction go(a) {\n  return [a];\n}\n'
         feats, toks = reference.features_from_code(code)
         np_logits = ref.forward(feats)
         tf = {k: torch.from_numpy(v).unsqueeze(0) for k, v in feats.items()}
@@ -193,13 +193,13 @@ def test_no_nan_on_extremes():
     gives inf/inf. The GELU in the head reaches that range on ordinary input, and
     the failure is silent: NaN logits make argmax return class 0.
     """
-    m = NeuralLexer(deployment_config())
+    cfg = deployment_config()
+    m = NeuralLexer(cfg)
     m.eval()
     m.set_quant(True)
     B, T = 1, 64
     for scale in (1, 50, 1000):
-        feats = {k: torch.randint(0, FIELD_SIZES.get(k, 8), (B, T))
-                 for k in dp.FEATURE_KEYS if k != 'flags'}
+        feats = {k: torch.randint(0, n, (B, T)) for k, n in cfg.fields().items()}
         feats['flags'] = torch.full((B, T), 255)
         with torch.no_grad():
             out = m(feats, torch.ones(B, T, dtype=torch.bool)) * scale
@@ -230,6 +230,23 @@ def test_shader_generates_and_covers_pipeline():
 
 
 @test
+def test_shader_minify_keeps_entry_points():
+    """Minification must keep every dispatched entry point and re-lex identically."""
+    m = NeuralLexer(deployment_config())
+    with tempfile.TemporaryDirectory() as d:
+        export.export_model(m, d)
+        meta = json.loads((Path(d) / 'weights.meta.json').read_text())
+    src = wgsl.generate(meta)
+    entries = {s['entry'] for s in wgsl.pipeline_order(meta['config']['n_layers'])}
+    small = wgsl.minify(src, entries)
+    names = set(re.findall(r'\bfn\s+(\w+)', small))
+    assert entries <= names, f'entry points lost: {sorted(entries - names)}'
+    assert '//' not in small and '\n' not in small, 'comments or newlines survived'
+    assert wgsl.minify(small, entries).count('fn ') == small.count('fn '), 'not idempotent'
+    return f'{len(src)} -> {len(small)} chars, {len(entries)} entry points kept'
+
+
+@test
 def test_tokenizer_parity():
     """The JS and Python tokenizers must agree bit-for-bit.
 
@@ -240,6 +257,7 @@ def test_tokenizer_parity():
         'a.py': 'def f(x: int) -> int:\n    # c\n    return x + MAX_N\n',
         'b.js': 'export const f = async (a) => `x${a}`; // done\n',
         'c.txt': '=>{}[]();:: \t\r\n\\ "quoted" élève\n',
+        'd.go': 'func f() {\n\tif (a[1]) {\n\t\t\tx := `s`\n\n\n  }}}) ]\r\n# h\n  - y: 1\n',
     }
     with tempfile.TemporaryDirectory() as d:
         paths = []
@@ -255,7 +273,8 @@ def test_tokenizer_parity():
             "const out=[];\n"
             "for (const f of fs.readFileSync('%s/list.txt','utf8').trim().split('\\n')) {\n"
             "  const t = tokenize(fs.readFileSync(f,'utf8'));\n"
-            "  out.push({f, count:t.count, packed:Array.from(t.packed)});\n"
+            "  out.push({f, count:t.count, packed:Array.from(t.packed),\n"
+            "            starts:Array.from(t.starts)});\n"
             "}\n"
             "process.stdout.write(JSON.stringify(out));\n" % (HERE, d))
         proc = subprocess.run(['node', str(script)], cwd=HERE,
@@ -268,8 +287,9 @@ def test_tokenizer_parity():
     total = 0
     for entry in js:
         code = texts[entry['f']]
-        toks = tokenizer.tokenize(code)
+        toks = tokenizer.tokenize_v2(code)
         assert len(toks) == entry['count'], f"{entry['f']}: token count differs"
+        assert [t.start for t in toks] == entry['starts'], f"{entry['f']}: starts differ"
         packed = []
         for t in toks:
             packed.append((t.kind & 3) | ((t.len_bucket & 7) << 2)
@@ -278,6 +298,9 @@ def test_tokenizer_parity():
             packed.append((t.hash1 & 1023) | ((t.hash2 & 127) << 10)
                           | ((t.trans_prev & 15) << 17) | ((t.trans_next & 15) << 21)
                           | ((t.sym_prev & 31) << 25))
+            packed.append(t.gap_prev | (t.gap_next << 2) | (t.indent << 4)
+                          | (t.line_first << 7) | (t.brace_depth << 12)
+                          | (t.paren_depth << 14))
         assert packed == entry['packed'], f"{entry['f']}: packed features differ"
         total += len(toks)
     return f'{total} tokens identical'
@@ -288,9 +311,8 @@ def test_hash_buckets_within_table():
     """Tokenizer bucket ranges must fit the embedding rows they index."""
     code = ('class HttpServer { const MAX = 0xFF; } // comment\n'
             'def snake_case_name(x): return x\n' * 40)
-    toks = tokenizer.tokenize(code)
-    arrays = tokenizer.tokens_to_arrays(toks)
-    for field, size in FIELD_SIZES.items():
+    arrays = tokenizer.tokens_to_arrays(tokenizer.tokenize_v2(code), 2)
+    for field, size in LexerConfig().fields().items():
         hi = int(arrays[field].max())
         assert hi < size, f'{field} produced {hi}, table has {size} rows'
     return 'all fields within table bounds'
@@ -387,7 +409,7 @@ def test_training_language_policy_and_sampler():
 
 
 @test
-def test_boundary_detection_crosses_masked_whitespace():
+def test_boundary_detection_crosses_masked_tokens():
     from train import _boundary_counts, _boundary_masks
     labels = torch.tensor([[1, MASK, MASK, 2, MASK, 2]])
     correct = labels.clone()
@@ -397,7 +419,7 @@ def test_boundary_detection_crosses_masked_whitespace():
     assert _boundary_counts(labels, correct) == (1, 1, 1)
     missed = torch.tensor([[1, 0, 0, 1, 0, 1]])
     assert _boundary_counts(labels, missed) == (0, 0, 1)
-    return 'nearest scored-token transition is counted across whitespace'
+    return 'nearest scored-token transition is counted across masked tokens'
 
 
 @test
@@ -417,12 +439,8 @@ def test_split_is_deterministic_and_by_content():
 
 @test
 def test_every_language_has_val_data():
-    """A language with no val windows is silently scored as 0% by the metric.
-
-    This actually happened: all 35 markdown files hashed into train, so markdown
-    contributed a hard zero to a headline number for an entire run.
-    """
-    cache = HERE / 'corpus' / 'dataset'
+    """A language with no val windows is silently scored as 0% by the metric."""
+    cache = HERE / 'corpus' / 'dataset_v2'
     if not (cache / 'meta.json').exists():
         return 'skipped (no dataset cache)'
     ds, meta = dp.build(cache=str(cache))
@@ -437,7 +455,7 @@ def test_labels_align_without_guessing():
     """Tokens Shiki does not cover must be masked, never assigned a class."""
     code = 'def f():\n    return 1\n'
     char_cls = np.full(len(code), 9, dtype=np.uint8)  # nothing covered
-    toks = tokenizer.tokenize(code)
+    toks = tokenizer.tokenize_v2(code)
     lab = dp.align(toks, char_cls)
     assert (lab == MASK).all(), 'uncovered tokens were given labels'
     char_cls[:3] = CLASS_NAMES.index('keyword')

@@ -1,6 +1,6 @@
 # lex
 
-Syntax highlighting from a 36.15 KiB neural model running on WebGPU. Zero
+Syntax highlighting from a 28.09 KiB neural model running on WebGPU. Zero
 dependencies, no grammars, no per-language bundles.
 
 ```js
@@ -37,7 +37,10 @@ import 'lex/theme.css';
 There is no grammar. A CPU pre-tokenizer splits the source into runs of four
 kinds -- word, space, newline, symbol -- and derives a handful of sparse features
 per token: a length bucket, first and last character, two hashes of the word,
-eight character-class flags, and the bigram transitions on either side. A small
+eight character-class flags, and the bigram transitions on either side.
+Whitespace does not reach the model as tokens; it becomes per-token fields
+instead -- the gap to each neighbour, the line's indentation, the first symbol
+on the line, and bracket depth. A small
 model reads those and predicts one of nine classes: `plain`, `comment`, `string`,
 `number`, `keyword`, `type`, `function`, `constant`, `operator`.
 
@@ -45,9 +48,11 @@ Because the features are language-agnostic, so is the model. It was trained on
 a 52-language primary set and will make a reasonable attempt at a language it
 has never seen rather than failing outright.
 
-The model has 142,274 parameters, quantized to 3 bits for the embedding table,
-1 bit for projections, and 4 bits for depthwise kernels. It ships inline with
-no model fetch.
+The model has 127,682 parameters, quantized to 3 bits for the embedding table,
+1 bit for projections, and 4 bits for depthwise kernels; scales, biases and
+norm gains ship as 8-bit codes. It was distilled from a full-precision teacher
+and ships inline with no model fetch: the whole package is 34.78 KiB after
+minification and Brotli.
 
 It also reads a pooled *document signature* before any recurrent layer runs and
 uses it to modulate every layer. That is what lets one grammar-free model treat
@@ -62,15 +67,17 @@ Scored as agreement with [Shiki](https://shiki.style) over held-out files,
 per non-whitespace character, weighted by GitHub language popularity.
 `bun run dev` in `demo/` reproduces it.
 
-- **88.10%** on 1,199 files from repositories absent from training.
-- **90.24%** on 1,049 held-out files.
+- **93.76%** on 1,196 files from repositories absent from training.
+- **94.03%** on 1,050 held-out files.
+- **89.36%** on gpu-lexer's own verification corpus, scored with gpu-lexer's
+  taxonomy (gpu-lexer@0.0.3: 86.75%).
 
 ## Performance notes
 
 Two measurements shape the runtime, and both are worth knowing if you are
 embedding this:
 
-**Calls in the same microtask turn are batched.** About 96% of a single
+**Calls in the same microtask turn are batched.** Most of a single
 `highlight()` is the GPU readback round-trip, and that cost is nearly flat in
 input size. Highlighting ten code blocks with ten separate `await`s pays it ten
 times; issuing them together pays it once:

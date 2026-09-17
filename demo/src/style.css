@@ -478,6 +478,47 @@ figcaption {
   -webkit-text-fill-color: transparent;
 }
 
+/* Native mode: the textarea shows its own text and ::highlight() colours it. */
+.native-highlight .playground-highlight { display: none; }
+.native-highlight .playground-input {
+  color: var(--ink);
+  -webkit-text-fill-color: currentColor;
+}
+.native-highlight .playground-input::selection {
+  color: inherit;
+  -webkit-text-fill-color: currentColor;
+}
+
+::highlight(lex-operator) { color: var(--ink); }
+::highlight(lex-comment)  { color: #8b8b8b; }
+::highlight(lex-string)   { color: var(--green); }
+::highlight(lex-number)   { color: #79c0ff; }
+::highlight(lex-constant) { color: #79c0ff; }
+::highlight(lex-keyword)  { color: var(--red); }
+::highlight(lex-type)     { color: #ffa657; }
+::highlight(lex-function) { color: var(--gold); }
+
+.playground-oneline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.playground-oneline[hidden] { display: none; }
+.playground-oneline input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 2px;
+  background: var(--box);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13.5px;
+  outline: none;
+}
+.playground-oneline input:focus { border-color: var(--accent); }
+
 .playground-footer {
   display: flex;
   justify-content: space-between;

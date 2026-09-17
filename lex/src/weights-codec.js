@@ -1,98 +1,46 @@
 // Decodes the embedded weight blob. Zero dependencies and no network fetch: the
-// model is ~35 KB, so inlining it costs less than the round-trip it saves and
+// model is ~28 KB, so inlining it costs less than the round-trip it saves and
 // keeps `lex` usable from a single import.
 //
-// Quantized codes (the bit-packed weight planes) and everything else (scales,
-// biases, norm gains -- shipped as fp16) use different encodings on purpose.
-// Codes are one character per value (SYM below) rather than base85 of the
-// packed bytes: packing densely is *smaller* uncompressed but compresses far
-// worse in isolation, since dense bits look close to random noise to a
-// general-purpose compressor while long runs of repeated small values
-// (common in low-bit codes) are exactly what it can exploit -- the SYM string
-// alone was 26.8 KB after Brotli against 37.2 KB for base85 of the same
-// bytes. That gain does not survive being shipped in the same file as the
-// f16 base85 string and the JSON metadata, though: end to end, the real
-// generated weights.js Brotli-compresses to about the same size either way,
-// because Brotli fits one shared entropy model to the whole file and mixing
-// SYM's 16-symbol alphabet with base85's 90-symbol one mostly erases SYM's
-// own advantage (see bundle_lex.py's module docstring for the numbers). This
-// is kept anyway because the code is headed upstream to a project that may
-// end up serving the weight blob as its own request rather than inlined,
-// where the isolated-stream number would actually apply. The two strings
-// stay separate either way because concatenating them compresses worse than
-// keeping them apart, even before metadata is added.
+// Two strings: the bit-packed weight planes as hex of their little-endian
+// bytes, and everything else (fp16 scales/norms/headers followed by 8-bit
+// scalar codes) as base64. Measured on the v2 model after Brotli, that pair was
+// 26.82 KiB against 27.11 for base64+base64, 27.15 for a hex-per-code
+// encoding, 27.77 for base85+base85, and 26.63 for the raw binary: 1-bit
+// planes are near-random, so the encoding that keeps whole bytes on character
+// boundaries compresses best.
 
-// 85 symbols packing 4 bytes into 5 characters (25% overhead) instead of
-// base64's 3-into-4 (33%) -- the same alphabet and padding rule as Python's
-// stdlib base64.b85encode/b85decode, so bundle_lex.py can just call that
-// directly rather than shipping a second implementation to stay in sync with.
-const B85 =
-  '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~';
-const B85_LOOKUP = new Uint8Array(128);
-for (let i = 0; i < B85.length; i++) B85_LOOKUP[B85.charCodeAt(i)] = i;
-
-/**
- * base85 -> bytes. A short final group is padded with '~' (the alphabet's
- * highest-value character) up to 5 characters before decoding, then the
- * corresponding number of trailing bytes is dropped -- the exact inverse of
- * how b85encode pads with zero bytes and truncates output characters.
- */
-export function decodeBase85(str) {
-  const padding = (5 - (str.length % 5)) % 5;
-  const n = str.length + padding;
-  const out = new Uint8Array((n / 5) * 4);
-  let o = 0;
-  for (let i = 0; i < n; i += 5) {
-    let acc = 0;
-    for (let j = 0; j < 5; j++) {
-      const k = i + j;
-      acc = acc * 85 + B85_LOOKUP[k < str.length ? str.charCodeAt(k) : 126]; // 126 = '~'
-    }
-    out[o++] = (acc >>> 24) & 255;
-    out[o++] = (acc >>> 16) & 255;
-    out[o++] = (acc >>> 8) & 255;
-    out[o++] = acc & 255;
-  }
-  return out.subarray(0, out.length - padding);
+const HEX = new Uint8Array(128);
+for (let i = 0; i < 16; i++) {
+  HEX['0123456789abcdef'.charCodeAt(i)] = i;
+  HEX['0123456789ABCDEF'.charCodeAt(i)] = i;
 }
 
-// One character per quantized code (0-15): every tensor in this model is 1,
-// 3, or 4 bits, so hex digits cover it exactly with no wasted alphabet --
-// must match SYMBOL_ALPHABET in train/bundle_lex.py exactly.
-const SYM_LOOKUP = new Uint8Array(128);
-for (let i = 0; i < 16; i++) SYM_LOOKUP['0123456789ABCDEF'.charCodeAt(i)] = i;
-
-/** hex-per-code string -> Uint8Array of 0-15 code values, one per character. */
-function decodeSymbols(str) {
-  const out = new Uint8Array(str.length);
-  for (let i = 0; i < str.length; i++) out[i] = SYM_LOOKUP[str.charCodeAt(i)];
-  return out;
-}
-
-/**
- * Codes -> densely bit-packed planes, the exact inverse of train/quant.py's
- * pack_bitplanes: plane b holds bit b of code i at word i>>5, bit i&31, and
- * the output is laid out bit-plane-major (all of plane 0's words, then all of
- * plane 1's, ...) to match `planes2d.ravel()` there.
- */
-function packBitplanes(codes, bits) {
-  const words = Math.ceil(codes.length / 32);
-  const out = new Uint32Array(bits * words);
-  for (let i = 0; i < codes.length; i++) {
-    const w = i >>> 5;
-    const bit = i & 31;
-    const v = codes[i];
-    for (let b = 0; b < bits; b++) {
-      if ((v >>> b) & 1) out[b * words + w] |= (1 << bit);
+/** hex of little-endian bytes -> u32 words (the packed bit-planes). */
+function decodeWords(str, words) {
+  const out = new Uint32Array(words);
+  for (let i = 0; i < words; i++) {
+    let w = 0;
+    for (let b = 3; b >= 0; b--) {
+      const k = (i * 4 + b) * 2;
+      w = (w << 8) | (HEX[str.charCodeAt(k)] << 4) | HEX[str.charCodeAt(k + 1)];
     }
+    out[i] = w >>> 0;
   }
   return out;
 }
 
+/** base64 -> bytes. */
+export function decodeBase64(str) {
+  const bin = atob(str);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 /**
- * IEEE half -> float. The model file stores scales, biases, norm gains and decay
- * logits as fp16; the shader reads f32, so this runs once at load over a couple
- * of thousand values.
+ * IEEE half -> float, for the fp16 stream (the 8-bit scalars' step/offset
+ * headers). Runs once at load.
  */
 export function halfToFloat(u16) {
   const out = new Float32Array(u16.length);
@@ -128,20 +76,47 @@ export function halfToFloat(u16) {
 }
 
 /**
- * Reassemble the two GPU buffers the shader binds from the hex-per-code
- * string (quantized weights) and the base85 string (everything else, fp16).
- * `meta.sym_tensors` records where each tensor's codes live in `sym` and
- * where its packed planes belong in the output, written by bundle_lex.py in
- * the same pass that produced `sym` so the two always agree.
+ * Reassemble the two GPU buffers the shader binds: the plane words, and the
+ * float table (fp16 values and headers expanded, 8-bit scalars decoded).
  */
-export function unpackWeights(sym, f16b85, meta) {
-  const planes = new Uint32Array(meta.plane_words);
-  for (const t of Object.values(meta.sym_tensors)) {
-    const codes = decodeSymbols(sym.substr(t.offset, t.words * 32));
-    planes.set(packBitplanes(codes, t.bits), t.plane_offset);
-  }
-  const f16Bytes = decodeBase85(f16b85);
+export function unpackWeights(planesHex, scalarsB64, meta) {
+  const planes = decodeWords(planesHex, meta.plane_words);
+  const f16Bytes = decodeBase64(scalarsB64);
   const halves = new Uint16Array(
     f16Bytes.buffer.slice(f16Bytes.byteOffset, f16Bytes.byteOffset + meta.f16_bytes));
-  return { planes, fp: halfToFloat(halves) };
+  const floats = halfToFloat(halves);
+  const codes = f16Bytes.subarray(meta.f16_bytes, meta.f16_bytes + meta.u8_count);
+  return { planes, fp: decodeScalars(meta.scalar_segments, floats, codes, meta.f16_count) };
+}
+
+/**
+ * 8-bit scalar streams -> the flat float table the shader indexes; mirrors
+ * train/export.py's decode_scalars. Segments are in table order: `f16` reads
+ * raw halves, `i8` reads one half step then signed codes, `log8` reads a half
+ * (lo, step) pair then unsigned codes as exp(lo + code * step).
+ */
+export function decodeScalars(segments, halves, codes, total) {
+  const out = new Float32Array(total);
+  const signed = new Int8Array(codes.buffer, codes.byteOffset, codes.length);
+  let o = 0;
+  let fi = 0;
+  let ui = 0;
+  for (const seg of segments) {
+    const n = seg.count;
+    if (seg.enc === 'f16') {
+      out.set(halves.subarray(fi, fi + n), o);
+      fi += n;
+    } else if (seg.enc === 'i8') {
+      const step = halves[fi++];
+      for (let k = 0; k < n; k++) out[o + k] = signed[ui + k] * step;
+      ui += n;
+    } else {
+      const lo = halves[fi++];
+      const step = halves[fi++];
+      for (let k = 0; k < n; k++) out[o + k] = Math.fround(Math.exp(lo + codes[ui + k] * step));
+      ui += n;
+    }
+    o += n;
+  }
+  return out;
 }

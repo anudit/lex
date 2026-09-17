@@ -8,6 +8,7 @@
 // highlighting disagreement.
 
 import { classifyScopes, CLASS, CLASS_NAMES } from '../../train/scope_map.mjs';
+import { classFromScopes, confidenceFromScopes } from './gpu_classes.js';
 
 export { CLASS, CLASS_NAMES };
 export const PLAIN = CLASS.plain;
@@ -25,6 +26,36 @@ export function fillFromSpans(code, spans) {
 
 // ---------------------------------------------------------------- shiki (ref)
 
+/** Walk Shiki's per-token scope explanations in source order, calling
+ * onPart(text, scopes, pos) once per contiguous run of source text. Shared by
+ * every Shiki-backed reference so each just supplies its own scope->class
+ * (and optionally scope->confidence) rules.
+ */
+function walkShikiTokens(highlighter, code, lang, onPart) {
+  const res = highlighter.codeToTokens(code, { lang, theme: 'github-dark', includeExplanation: true });
+  let pos = 0;
+  for (const line of res.tokens) {
+    for (const token of line) {
+      const parts = token.explanation?.length
+        ? token.explanation
+        : [{ content: token.content, scopes: [] }];
+      for (const part of parts) {
+        const text = part.content;
+        if (!text.length) continue;
+        if (!code.startsWith(text, pos)) {
+          const idx = code.indexOf(text, pos);
+          if (idx === -1) return;
+          pos = idx;
+        }
+        onPart(text, part.scopes.map((s) => s.scopeName), pos);
+        pos += text.length;
+      }
+    }
+    if (code[pos] === '\r') pos += 1;
+    if (code[pos] === '\n') pos += 1;
+  }
+}
+
 export function makeShikiAdapter(highlighter) {
   return {
     name: 'Shiki',
@@ -33,34 +64,56 @@ export function makeShikiAdapter(highlighter) {
       || ['txt', 'text', 'plaintext'].includes(lang),
     classes(code, lang) {
       const out = new Uint8Array(code.length).fill(PLAIN);
-      const res = highlighter.codeToTokens(code, {
-        lang, theme: 'github-dark', includeExplanation: true,
+      walkShikiTokens(highlighter, code, lang, (text, scopes, pos) => {
+        out.fill(classifyScopes(scopes), pos, pos + text.length);
       });
-      let pos = 0;
-      for (const line of res.tokens) {
-        for (const token of line) {
-          const parts = token.explanation?.length
-            ? token.explanation
-            : [{ content: token.content, scopes: [] }];
-          for (const part of parts) {
-            const text = part.content;
-            if (!text.length) continue;
-            if (!code.startsWith(text, pos)) {
-              const idx = code.indexOf(text, pos);
-              if (idx === -1) return out;
-              pos = idx;
-            }
-            const cls = classifyScopes(part.scopes.map((s) => s.scopeName));
-            out.fill(cls, pos, pos + text.length);
-            pos += text.length;
-          }
-        }
-        if (code[pos] === '\r') pos += 1;
-        if (code[pos] === '\n') pos += 1;
-      }
       return out;
     },
   };
+}
+
+// gpu-lexer's own scope->class taxonomy (classes.js) and confidence rule, for
+// scoring the "gpu-lexer verification corpus" the same way gpu-lexer's own
+// packages/benchmark/src/correctness.js does: per non-whitespace character
+// (validated equivalent to their per-token scoring), but only counting
+// characters whose reference confidence is exactly 1 -- confidence 0.5/0.25
+// tokens are excluded from both hit and total, matching how correctness.js's
+// Uint8Array supervisionWeights truncates fractional confidence to 0.
+const GPU_CLASS_INDEX = Object.fromEntries(CLASS_NAMES.map((name, i) => [name, i]));
+
+export function makeShikiAdapterGpu(highlighter) {
+  return {
+    name: 'Shiki (gpu-lexer taxonomy)',
+    reference: true,
+    supports: (lang) => highlighter.getLoadedLanguages().includes(lang)
+      || ['txt', 'text', 'plaintext'].includes(lang),
+    classesAndConfidence(code, lang) {
+      const cls = new Uint8Array(code.length).fill(PLAIN);
+      const conf = new Float32Array(code.length).fill(1);
+      walkShikiTokens(highlighter, code, lang, (text, scopes, pos) => {
+        cls.fill(GPU_CLASS_INDEX[classFromScopes(scopes)] ?? PLAIN, pos, pos + text.length);
+        conf.fill(confidenceFromScopes(scopes), pos, pos + text.length);
+      });
+      return { cls, conf };
+    },
+  };
+}
+
+/** Like agreement(), but only counts non-whitespace characters whose
+ * reference confidence is exactly 1 -- mirrors gpu-lexer's own confidence-
+ * gated denominator (see makeShikiAdapterGpu above).
+ */
+export function agreementConfidenceGated(code, refCls, refConf, got) {
+  let hit = 0;
+  let total = 0;
+  for (let i = 0; i < code.length; i++) {
+    const c = code.charCodeAt(i);
+    if (c === 32 || c === 9 || c === 10 || c === 13) continue;
+    if (refConf[i] < 1) continue;
+    total++;
+    if (refCls[i] === got[i]) hit++;
+  }
+  return { hit, total };
 }
 
 // ------------------------------------------------------------------ sugar-high

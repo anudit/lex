@@ -78,6 +78,11 @@ def main() -> None:
         # The old external set covers only 57 languages. An empty root makes the
         # 75/25 popularity/coverage validation score select this checkpoint.
         '--real-bench-root': '',
+        # lex-large keeps the original feature layout, four-view file context
+        # and fp16 scalars; ../train/train.py defaults to lex-lite's v2.
+        '--feature-version': '1',
+        '--ctx-views': 'full',
+        '--scalar-bits': '16',
     }
     for flag, value in defaults.items():
         _default(flag, value)

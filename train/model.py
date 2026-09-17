@@ -1,39 +1,31 @@
 """
-Neural lexer: a token-classification model sized for WebGPU inference.
+lex-lite (v2): a token-classification model sized for WebGPU inference.
 
-Shape of the design, and what each choice is answering:
+  * Factorized embedding. One shared 3-bit table holds every feature field at
+    disjoint offsets (one scale per field) and is projected up to `dim`. It is
+    the model's lexical memory and its precision is load-bearing.
+  * Whitespace-free sequence. The tokenizer (tokenize_v2) drops whitespace and
+    newline runs; what they carried arrives as per-token fields -- gap to each
+    neighbour, line indentation, first symbol on the line, bracket depth -- so
+    every conv tap and every recurrent step is spent on a real token.
+  * Document signature + FiLM. Masked mean/max of the embeddings, pooled before
+    any layer, is projected to a per-layer scale and shift. Language identity is
+    highly separable from it, and FiLM routes it into the conv and recurrence
+    (`$` in shell vs Markdown) instead of only the classifier.
+  * Bidirectional gated linear recurrence, h = a*h + b, run as a log2(T)
+    associative scan. Decay and input gain are decoupled so a channel can hold
+    long memory without losing its input; forward channels span ~10-500 tokens,
+    backward ~1-15. A low-rank input-conditioned erase gate lets closing
+    delimiters clear string/comment state.
+  * Global context from prefix and suffix means (declaration-gated prefix), so a
+    token can tell "declared earlier" from "appears from nowhere"; it is
+    length-invariant, behaving the same on a snippet and a long file.
+  * Quantization-aware throughout: 3-bit embedding, 1-bit projections, 4-bit
+    depthwise kernels, 8-bit scales/biases/norms/decays (scalar_bits=8).
 
-  * Factorized embedding. The multi-field feature table is the model's lexical
-    memory and dominates the parameter count. Embedding into a narrow dim and
-    projecting up costs one small matmul and lets the table carry more bits per
-    weight inside the same byte budget -- which is what actually decides whether
-    keywords stay separable from identifiers.
-  * Log-depth associative scan. The recurrence h_t = a*h_{t-1} + b is associative,
-    so it runs in log2(T) parallel steps instead of T sequential ones. The old
-    Python loop issued 4*T kernel launches per forward.
-  * h = a*h + b, not h = g*h + (1-g)*u. Tying the input gain to (1-decay) means a
-    channel that learns long memory simultaneously loses its input signal, so the
-    model cannot represent "remember that a block comment opened 300 tokens ago".
-  * Explicit global context. gpu-lexer spends two of its seven passes on a
-    file-level tree reduction for exactly this reason. Dropping it is a capability
-    regression, so it comes back as a masked pool plus gated broadcast -- which is
-    length-invariant, and therefore behaves the same on a 40-token snippet and a
-    4000-token file.
-  * FiLM conditioning on a document signature. A linear probe showed the pooled
-    context already identifies the language with 90.8% accuracy -- 100% for
-    PowerShell -- while the model still got only 75.7% of PowerShell tokens right.
-    The information was present and unused: the context reached the classifier
-    only as a concatenated channel at the very last layer, so it could not tell
-    the depthwise conv or the recurrence that `$` is not an operator here. The
-    signature is now pooled *before* the layers (84.2% language-separable on its
-    own) and modulates every layer's activations.
-
-Magika (ICSE 2025) is what prompted that: it shows content-type detection from a
-1.5 KB byte sample is essentially solved -- 99% F1 on text types, and its largest
-gains over prior tools land on exactly our weak languages (Markdown +45, YAML +25,
-Perl +20, SQL +18, CSS +15). The lesson taken here is not to bolt on a language
-classifier but that language identity is cheap, highly separable, and worth
-routing through the whole network.
+lex-large (../train_large) builds on the same blocks with the base feature
+layout (feature_version=1), four-view context and fp16 scalars; those paths
+exist for it.
 """
 
 from __future__ import annotations
@@ -45,9 +37,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from quant import QuantEmbedding, QuantLinear
+from quant import QuantEmbedding, QuantLinear, fake_int8
 
-# Feature vocabulary sizes, matching tokenizer.py.
+# Base feature layout (tokenizer.tokenize, feature_version=1): lex-large's input,
+# which it extends by reassigning this dict.
 FIELD_SIZES: dict[str, int] = {
     'kind': 4,
     'len_bucket': 8,
@@ -60,7 +53,23 @@ FIELD_SIZES: dict[str, int] = {
     'sym_prev': 32,
     'sym_next': 32,
 }
+# lex-lite's layout (tokenizer.tokenize_v2, feature_version=2): whitespace-free
+# sequence, 256 primary hash buckets, and the structural fields.
+FIELD_SIZES_V2: dict[str, int] = {
+    **{k: v for k, v in FIELD_SIZES.items()},
+    'hash1': 256,
+    'gap_prev': 4,
+    'gap_next': 4,
+    'indent': 8,
+    'line_first': 32,
+    'brace_depth': 4,
+    'paren_depth': 4,
+}
 N_FLAG_BITS = 8
+
+
+def field_sizes(version: int) -> dict[str, int]:
+    return FIELD_SIZES if version == 1 else FIELD_SIZES_V2
 
 
 @dataclass
@@ -87,26 +96,35 @@ class LexerConfig:
     decay_b_max: float = 0.93   # ~15 tokens
     decay_min: float = 0.5      # fallback for symmetric
     decay_max: float = 0.995    # fallback for symmetric
-    # Dilated depthwise convolution rates per layer: expands receptive field from +-2
-    # to +-14 tokens at zero parameter cost.
+    # Dilated depthwise convolution rates per layer: a +-14 token receptive
+    # field at zero parameter cost.
     dilations: tuple[int, ...] = (1, 2, 4)
-    # Rank 32 is word-aligned in the packed runtime and leaves room for the
-    # selective erase projections below.
+    # Rank 32 is word-aligned in the packed runtime.
     film_rank: int = 32
-    # A zero rank preserves compatibility with pre-selective-reset checkpoints.
-    # New training runs use rank 8 via train.py's default CLI.
-    erase_rank: int = 0
-    # Architectural trick flags (all initialized for seamless backward-compatible start):
-    use_dynamic_reset: bool = True   # state-dependent decay reset
+    # Rank of each layer's input-conditioned erase gate; 0 disables it.
+    erase_rank: int = 8
+    # Accepted for serialized configs; has no effect.
+    use_dynamic_reset: bool = True
     use_decl_gate: bool = True       # declaration-biased prefix in GlobalContext
     use_highway: bool = True         # embedding-to-head direct highway
     # Training-only regularization for the unconstrained FP teacher. Applied to
     # each residual branch and the classifier's hidden layer; inactive in eval()
     # and absent from exports, so it never changes what ships.
     dropout: float = 0.0
+    # 2 = lex-lite's whitespace-free sequence + structural fields;
+    # 1 = the base layout lex-large uses.
+    feature_version: int = 2
+    # 'full' pools mean, max, prefix and suffix; 'prefix_suffix' keeps only the
+    # two position-dependent views (mean and max already feed the signature).
+    ctx_views: str = 'prefix_suffix'
+    # 16 ships scales/biases/norms/decays as fp16; 8 as 8-bit codes (QAT'd).
+    scalar_bits: int = 8
+
+    def fields(self) -> dict[str, int]:
+        return field_sizes(self.feature_version)
 
     def rows(self) -> int:
-        return sum(FIELD_SIZES.values()) + N_FLAG_BITS
+        return sum(self.fields().values()) + N_FLAG_BITS
 
 
 def _decay_logits(dim: int, lo: float, hi: float) -> torch.Tensor:
@@ -156,9 +174,10 @@ class FeatureEmbedding(nn.Module):
     def __init__(self, cfg: LexerConfig):
         super().__init__()
         self.cfg = cfg
+        self.fields = cfg.fields()
         offset = 0
         offsets = {}
-        for name, size in FIELD_SIZES.items():
+        for name, size in self.fields.items():
             offsets[name] = offset
             offset += size
         self.flag_offset = offset
@@ -168,9 +187,9 @@ class FeatureEmbedding(nn.Module):
         # One scale group per feature field: a per-row scale would add 2 bytes to
         # every 12-byte embedding row, a 17% tax on the largest tensor here.
         group_ids = torch.zeros(offset, dtype=torch.long)
-        for gi, (name, size) in enumerate(FIELD_SIZES.items()):
+        for gi, (name, size) in enumerate(self.fields.items()):
             group_ids[offsets[name]:offsets[name] + size] = gi
-        group_ids[self.flag_offset:] = len(FIELD_SIZES)
+        group_ids[self.flag_offset:] = len(self.fields)
         if cfg.embedding_scale not in ('field', 'row'):
             raise ValueError('embedding_scale must be field or row')
         self.table = QuantEmbedding(offset, cfg.embed_dim, bits=cfg.embed_bits,
@@ -184,7 +203,7 @@ class FeatureEmbedding(nn.Module):
     def forward(self, feats: dict[str, torch.Tensor]) -> torch.Tensor:
         kind = feats['kind']
         acc = None
-        for name in FIELD_SIZES:
+        for name in self.fields:
             ids = feats[name] + self.field_offsets[name]
             e = self.table(ids)
             if name in ('hash1', 'hash2'):
@@ -213,17 +232,15 @@ class GlobalContext(nn.Module):
 
     def __init__(self, cfg: LexerConfig):
         super().__init__()
-        self.summary = QuantLinear(cfg.dim * 4, cfg.dim, bits=cfg.proj_bits)
+        self.views = getattr(cfg, 'ctx_views', 'full')
+        n_views = 4 if self.views == 'full' else 2
+        self.summary = QuantLinear(cfg.dim * n_views, cfg.dim, bits=cfg.proj_bits)
         self.gate = QuantLinear(cfg.dim, cfg.dim, bits=cfg.proj_bits)
         self.decl_gate = nn.Parameter(torch.zeros(cfg.dim)) if getattr(cfg, 'use_decl_gate', False) else None
 
     def forward(self, x: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
         m = valid.unsqueeze(-1).to(x.dtype)
         xm = x * m
-        denom = m.sum(dim=1, keepdim=True).clamp_min(1.0)
-        mean = (xm.sum(dim=1, keepdim=True) / denom).expand_as(x)
-        mx = x.masked_fill(~valid.unsqueeze(-1), float('-inf')).amax(dim=1, keepdim=True)
-        mx = torch.nan_to_num(mx, neginf=0.0).expand_as(x)
 
         if self.decl_gate is not None:
             dg = torch.sigmoid(x * self.decl_gate)
@@ -235,7 +252,15 @@ class GlobalContext(nn.Module):
         rcounts = m.flip(1).cumsum(dim=1).flip(1).clamp_min(1.0)
         suffix = xm.flip(1).cumsum(dim=1).flip(1) / rcounts
 
-        ctx = torch.tanh(self.summary(torch.cat([mean, mx, prefix, suffix], dim=-1)))
+        if self.views == 'full':
+            denom = m.sum(dim=1, keepdim=True).clamp_min(1.0)
+            mean = (xm.sum(dim=1, keepdim=True) / denom).expand_as(x)
+            mx = x.masked_fill(~valid.unsqueeze(-1), float('-inf')).amax(dim=1, keepdim=True)
+            mx = torch.nan_to_num(mx, neginf=0.0).expand_as(x)
+            views = [mean, mx, prefix, suffix]
+        else:
+            views = [prefix, suffix]
+        ctx = torch.tanh(self.summary(torch.cat(views, dim=-1)))
         return ctx * torch.sigmoid(self.gate(x))
 
 
@@ -299,7 +324,7 @@ class BidiGLUBlock(nn.Module):
         if self.erase_rank > 0:
             self.erase_down = QuantLinear(d, self.erase_rank, bits=cfg.proj_bits)
             self.erase_up = QuantLinear(self.erase_rank, d * 2, bits=cfg.proj_bits)
-            # Start as a near-identity extension of the old recurrence. Zero
+            # Start as a near-identity (erase ~0). Zero
             # latent weights remain negligible when first quantized because
             # their learned row scale is clamped near zero.
             nn.init.zeros_(self.erase_up.weight)
@@ -316,12 +341,6 @@ class BidiGLUBlock(nn.Module):
         init_b = _decay_logits(d, b_min, b_max)
         self.decay_f = nn.Parameter(init_f.clone())
         self.decay_b = nn.Parameter(init_b.clone())
-        if self.erase_rank == 0 and getattr(cfg, 'use_dynamic_reset', False):
-            self.reset_f = nn.Parameter(torch.full((d,), -4.0))
-            self.reset_b = nn.Parameter(torch.full((d,), -4.0))
-        else:
-            self.reset_f = None
-            self.reset_b = None
 
     def _depthwise(self, h: torch.Tensor) -> torch.Tensor:
         k = self.kernel_size
@@ -351,11 +370,6 @@ class BidiGLUBlock(nn.Module):
             base_b = torch.sigmoid(self.decay_b).view(1, 1, -1)
             a_f = base_f * (1.0 - erase_f)
             a_b = base_b * (1.0 - erase_b)
-        elif self.reset_f is not None:
-            rf = F.softplus(self.reset_f).view(1, 1, -1)
-            rb = F.softplus(self.reset_b).view(1, 1, -1)
-            a_f = torch.sigmoid(self.decay_f.view(1, 1, -1) - rf * torch.abs(b))
-            a_b = torch.sigmoid(self.decay_b.view(1, 1, -1) - rb * torch.abs(b))
         else:
             a_f = torch.sigmoid(self.decay_f).view(1, 1, -1).expand_as(b)
             a_b = torch.sigmoid(self.decay_b).view(1, 1, -1).expand_as(b)
@@ -391,10 +405,30 @@ class NeuralLexer(nn.Module):
         for module in self.modules():
             if isinstance(module, QuantLinear):
                 module.binary_ste = c.binary_ste
+        self._scalar_fq = False
+        self._in_scalar_fq = False
+
+    def scalar_param_names(self) -> list[str]:
+        """Every parameter that is not a quantized weight matrix: these ship as
+        fp16 or, with scalar_bits=8, as per-tensor 8-bit codes."""
+        quant = {f'{n}.weight' for n, m in self.named_modules()
+                 if isinstance(m, (QuantLinear, QuantEmbedding))}
+        return [n for n, _ in self.named_parameters() if n not in quant]
 
     def forward(self, feats: dict[str, torch.Tensor],
                 valid: torch.Tensor | None = None,
                 return_signature: bool = False):
+        if self._scalar_fq and not self._in_scalar_fq:
+            # Re-enter forward with every scalar tensor replaced by its 8-bit
+            # value; gradients reach the latent parameters straight through.
+            names = set(self.scalar_param_names())
+            params = {n: fake_int8(p) for n, p in self.named_parameters() if n in names}
+            self._in_scalar_fq = True
+            try:
+                return torch.func.functional_call(
+                    self, params, (feats, valid, return_signature), strict=False)
+            finally:
+                self._in_scalar_fq = False
         if valid is None:
             valid = torch.ones_like(feats['kind'], dtype=torch.bool)
         x = self.embedding(feats)
@@ -417,13 +451,6 @@ class NeuralLexer(nn.Module):
         # (the per-token hidden state right before the classifier merges in the
         # global context) -- handing both back avoids a second forward pass over
         # the embedding table, which is the largest tensor in the model.
-        #
-        # Tried concatenating the structural head's own prediction into the
-        # classifier input (mirroring gpu-lexer's tree model) in a full run: it
-        # made lex's own val score go up (86.0%) while real-bench went *down*
-        # (81.4% vs 83.0% without it) -- overfitting to lex's label quirks
-        # rather than generalizing. Reverted; kept as a training-only auxiliary
-        # loss instead, which measurably helped.
         return (logits, sig, token_repr) if return_signature else logits
 
     def doc_signature(self, feats: dict[str, torch.Tensor],
@@ -433,9 +460,12 @@ class NeuralLexer(nn.Module):
         return self.signature(self.embedding(feats), valid)
 
     def set_quant(self, enabled: bool) -> None:
+        scalar8 = enabled and getattr(self.cfg, 'scalar_bits', 16) == 8
+        self._scalar_fq = scalar8
         for m in self.modules():
             if isinstance(m, (QuantLinear, QuantEmbedding)):
                 m.quant_enabled = enabled
+                m.scale_quant = scalar8
 
     def size_report(self) -> dict:
         """Exact packed footprint, counting every parameter that must ship.
@@ -448,6 +478,10 @@ class NeuralLexer(nn.Module):
         quant_params = 0
         fp16_params = 0
         breakdown = {}
+        scalar8 = getattr(self.cfg, 'scalar_bits', 16) == 8
+        # 8-bit scalars: one byte each, plus an fp16 header per tensor (two for
+        # the log-domain scale vectors).
+        scalar_bytes = 0
         quant_weights = set()
         for name, mod in self.named_modules():
             if isinstance(mod, (QuantLinear, QuantEmbedding)):
@@ -469,14 +503,17 @@ class NeuralLexer(nn.Module):
                 quant_bits += words * 32 * mod.bits
                 quant_params += n
                 fp16_params += n_scales
+                scale_cost = n_scales + 4 if scalar8 else n_scales * 2
+                scalar_bytes += scale_cost
                 breakdown[name] = {
                     'params': n, 'bits': mod.bits,
-                    'bytes': words * 4 * mod.bits + n_scales * 2,
+                    'bytes': words * 4 * mod.bits + scale_cost,
                 }
         for name, p in self.named_parameters():
             if name not in quant_weights:
                 fp16_params += p.numel()
-        total_bytes = quant_bits / 8 + fp16_params * 2
+                scalar_bytes += p.numel() + 2 if scalar8 else p.numel() * 2
+        total_bytes = quant_bits / 8 + scalar_bytes
         return {
             'total_parameters': sum(p.numel() for p in self.parameters()),
             'quantized_params': quant_params,

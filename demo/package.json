@@ -9,7 +9,7 @@
     "capture": "echo \"with `bun run dev` running, open http://localhost:5173/capture.html — it writes src/results.json\""
   },
   "dependencies": {
-    "gpu-lexer": "^0.0.2",
+    "gpu-lexer": "^0.0.3",
     "highlight.js": "^11.12.0",
     "lex": "file:../lex",
     "lex-large": "file:../lex-large",

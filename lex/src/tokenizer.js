@@ -1,9 +1,9 @@
-// CPU pre-tokenizer. Splits source into runs of one of four kinds and derives the
-// sparse feature fields the model embeds. This is a direct port of the Python
-// tokenizer used for training -- the two must agree exactly, because a feature
-// computed differently at inference is a feature the model was never trained on.
-//
-// Kinds: 0 word, 1 space, 2 newline, 3 symbol.
+// CPU pre-tokenizer. Scans source into runs of four kinds (0 word, 1 space,
+// 2 newline, 3 symbol), keeps the word and symbol tokens, and derives the sparse
+// feature fields the model embeds -- whitespace survives as per-token fields.
+// This is a direct port of train/tokenizer.py's tokenize_v2; the two must agree
+// exactly, because a feature computed differently at inference is a feature the
+// model was never trained on.
 
 const TRANSITIONS = new Map([
   [(47 << 8) | 47, 1],   // //
@@ -37,12 +37,132 @@ function symbolHash(a, b) {
   return 1 + (v % 31);
 }
 
+// Words 0 and 1 of a token's packed features.
+function packWords(t, src, dst, packed, wpt) {
+  packed[dst * wpt] =
+    (t.kinds[src] & 3) |
+    ((t.lenB[src] & 7) << 2) |
+    ((t.firstC[src] & 127) << 5) |
+    ((t.lastC[src] & 127) << 12) |
+    ((t.flags[src] & 255) << 19) |
+    ((t.symNext[src] & 31) << 27);
+  packed[dst * wpt + 1] =
+    (t.h1[src] & 1023) |
+    ((t.h2[src] & 127) << 10) |
+    ((t.transPrev[src] & 15) << 17) |
+    ((t.transNext[src] & 15) << 21) |
+    ((t.symPrev[src] & 31) << 25);
+}
+
+// Whitespace and newline runs leave the sequence; what they carried moves into
+// a third word per token:
+//   bits 0-1 gap_prev, 2-3 gap_next (0 none, 1 space, 2 newline, 3 blank line)
+//   bits 4-6 indent bucket, 7-11 line_first, 12-13 brace depth, 14-15 paren depth
+const LINE_FIRST = new Uint8Array(128);
+{
+  const syms = '!"#$%&\'()*+,-./:;<=>?@[\\]^`{|}~';
+  for (let i = 0; i < syms.length; i++) LINE_FIRST[syms.charCodeAt(i)] = i + 1;
+}
+
+function indentBucket(w) {
+  if (w <= 2) return w;
+  if (w <= 4) return 3;
+  if (w <= 16) return 4 + ((w - 5) >> 2);
+  return 7;
+}
+
 /**
  * @param {string} text
- * @returns {{count:number, starts:Int32Array, ends:Int32Array, kinds:Uint8Array, packed:Uint32Array}}
- *   `packed` holds two u32 per token in exactly the layout the shader unpacks.
+ * @returns {{count:number, starts:Int32Array, ends:Int32Array, kinds:Uint8Array,
+ *            packed:Uint32Array}}
+ *   `packed` holds three u32 per token in exactly the layout the shader unpacks.
  */
 export function tokenize(text) {
+  const t = scan(text);
+  const { count, kinds, firstC, lastC, flags, h1, transPrev, transNext, symPrev, symNext } = t;
+  const keep = new Int32Array(count);
+  const extra = new Uint32Array(count);
+  let m = 0;
+  let spaces = false;
+  let newlines = 1;
+  let indentWidth = 0;
+  let indentTab = false;
+  let lineFirst = -1;
+  let braces = 0;
+  let parens = 0;
+  let prev = -1;
+  let prevGap = 0;
+  for (let i = 0; i < count; i++) {
+    const kind = kinds[i];
+    if (kind === 2) {
+      newlines++;
+      indentWidth = 0;
+      indentTab = false;
+      lineFirst = -1;
+      continue;
+    }
+    if (kind === 1) {
+      spaces = true;
+      if (lineFirst < 0) {
+        for (let p = t.starts[i]; p < t.ends[i]; p++) {
+          const tab = text.charCodeAt(p) === 9;
+          indentWidth += tab ? 4 : 1;
+          indentTab = indentTab || tab;
+        }
+      }
+      continue;
+    }
+    if (lineFirst < 0) lineFirst = kind === 0 ? 0 : LINE_FIRST[firstC[i]];
+    h1[i] &= 255;
+    const gap = newlines >= 2 ? 3 : newlines === 1 ? 2 : spaces ? 1 : 0;
+    if (indentTab) flags[i] |= 32;
+    const c = kind === 3 ? firstC[i] : -1;
+    let brace;
+    if (c === 123) { brace = Math.min(3, braces); braces++; }
+    else if (c === 125) { braces = Math.max(0, braces - 1); brace = Math.min(3, braces); }
+    else brace = Math.min(3, braces);
+    let paren;
+    if (c === 40 || c === 91) { paren = Math.min(3, parens); parens++; }
+    else if (c === 41 || c === 93) { parens = Math.max(0, parens - 1); paren = Math.min(3, parens); }
+    else paren = Math.min(3, parens);
+    transPrev[i] = transNext[i] = symPrev[i] = symNext[i] = 0;
+    if (prev >= 0) {
+      extra[m - 1] = (extra[m - 1] & ~(3 << 2)) | (gap << 2);
+      if (gap === 0) {
+        const tr = TRANSITIONS.get((lastC[prev] << 8) | firstC[i]) || 0;
+        transPrev[i] = tr;
+        transNext[prev] = tr;
+      }
+      if (kinds[prev] === 3 || kind === 3) {
+        const s = symbolHash(lastC[prev], firstC[i]);
+        symPrev[i] = s;
+        symNext[prev] = s;
+      }
+    }
+    // gap_next defaults to "newline" for the last token, as in Python.
+    extra[m] = gap | (2 << 2) | (indentBucket(indentWidth) << 4) | (lineFirst << 7)
+      | (brace << 12) | (paren << 14);
+    keep[m++] = i;
+    prev = i;
+    spaces = false;
+    newlines = 0;
+  }
+  const packed = new Uint32Array(m * 3);
+  const starts = new Int32Array(m);
+  const ends = new Int32Array(m);
+  const outKinds = new Uint8Array(m);
+  for (let j = 0; j < m; j++) {
+    const i = keep[j];
+    packWords(t, i, j, packed, 3);
+    packed[j * 3 + 2] = extra[j];
+    starts[j] = t.starts[i];
+    ends[j] = t.ends[i];
+    outKinds[j] = kinds[i];
+  }
+  return { count: m, starts, ends, kinds: outKinds, packed };
+}
+
+function scan(text) {
   const n = text.length;
   // Upper bound: every character its own token.
   const starts = new Int32Array(n);
@@ -124,41 +244,8 @@ export function tokenize(text) {
     else if (kind !== 1) lineStart = false;
   }
 
-  for (let i = 1; i < count; i++) {
-    const t = TRANSITIONS.get((lastC[i - 1] << 8) | firstC[i]) || 0;
-    transPrev[i] = t;
-    transNext[i - 1] = t;
-    if (kinds[i - 1] === 3 || kinds[i] === 3) {
-      const s = symbolHash(lastC[i - 1], firstC[i]);
-      symPrev[i] = s;
-      symNext[i - 1] = s;
-    }
-  }
-
-  // Pack into the two-word layout the shader reads. Keeping the packing here
-  // means the GPU never does field arithmetic it can avoid.
-  const packed = new Uint32Array(count * 2);
-  for (let i = 0; i < count; i++) {
-    packed[i * 2] =
-      (kinds[i] & 3) |
-      ((lenB[i] & 7) << 2) |
-      ((firstC[i] & 127) << 5) |
-      ((lastC[i] & 127) << 12) |
-      ((flags[i] & 255) << 19) |
-      ((symNext[i] & 31) << 27);
-    packed[i * 2 + 1] =
-      (h1[i] & 1023) |
-      ((h2[i] & 127) << 10) |
-      ((transPrev[i] & 15) << 17) |
-      ((transNext[i] & 15) << 21) |
-      ((symPrev[i] & 31) << 25);
-  }
-
   return {
-    count,
-    starts: starts.subarray(0, count),
-    ends: ends.subarray(0, count),
-    kinds: kinds.subarray(0, count),
-    packed,
+    count, starts, ends, kinds, firstC, lastC, lenB, h1, h2, flags,
+    transPrev, transNext, symPrev, symNext,
   };
 }

@@ -224,22 +224,21 @@ def sha256_file(path: Path) -> str | None:
     return digest.hexdigest()
 
 
+_NON_FEATURE_KEYS = frozenset({'label', 'valid', 'lang', 'index', 'teacher_logits'})
+
+
 def to_device(batch: dict, device: torch.device) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor]:
     feats = {k: v.to(device, non_blocking=True)
-             for k, v in batch.items() if k in dp.FEATURE_KEYS}
+             for k, v in batch.items() if k not in _NON_FEATURE_KEYS}
     return (feats, batch['label'].to(device), batch['valid'].to(device),
             batch['lang'].to(device))
 
 
-# Bracket characters as they appear in `first_char`/`last_char`: those fields are
-# the raw ASCII code for any character below 128 (see tokenizer.char_bucket), so
-# a single-character symbol token's identity is already sitting in the feature
-# tensors gpu-lexer's tree model gets this signal -- comment-state, string-state,
-# bracket depth -- as an explicit multi-task target predicted from the hidden
-# state and fed back into the classifier. Reproducing that here costs no new
-# labels or tokenizer changes: comment/string continuity comes from the existing
-# gold labels shifted by one token, and bracket depth is a deterministic
-# cumulative count over symbol tokens already in the batch.
+# Training-only structural targets (comment/string continuity, bracket depth),
+# supervised from the per-token hidden state. They need no extra labels:
+# continuity is the gold label shifted by one token, and depth is a cumulative
+# count over bracket symbols, whose identity is `first_char` (the raw ASCII code
+# for characters below 128, see tokenizer.char_bucket).
 _OPEN = {40: 0, 123: 1, 91: 2}    # ( { [
 _CLOSE = {41: 0, 125: 1, 93: 2}  # ) } ]
 
@@ -357,14 +356,14 @@ def evaluate(model: NeuralLexer, loader: DataLoader, device: torch.device,
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument('--dataset', default='./corpus/dataset')
+    ap.add_argument('--dataset', default='./corpus/dataset_v2')
     ap.add_argument('--total-tokens', type=int, default=None,
                     help='corpus size to slice; defaults to whatever is already '
                          'cached at --dataset, or 24M for a fresh cache')
-    ap.add_argument('--epochs', type=int, default=12)
+    ap.add_argument('--epochs', type=int, default=40)
     ap.add_argument('--batch-size', type=int, default=24)
     ap.add_argument('--lr', type=float, default=2e-3)
-    ap.add_argument('--warmup-epochs', type=int, default=3,
+    ap.add_argument('--warmup-epochs', type=int, default=4,
                     help='full-precision epochs before quantization-aware training')
     ap.add_argument('--out-dir', default='./checkpoints')
     ap.add_argument('--workers', type=int, default=4)
@@ -457,6 +456,14 @@ def main() -> None:
                          'OneCycleLR ramp, since restarting the ramp on an already-'
                          'converged quantized model would push it away from its optimum '
                          'before re-converging.')
+    ap.add_argument('--feature-version', type=int, choices=(1, 2), default=2,
+                    help='2 = lex-lite features (whitespace-free sequence, gap/indent/'
+                         'line/depth fields); 1 = the layout lex-large trains on')
+    ap.add_argument('--ctx-views', choices=('full', 'prefix_suffix'), default='prefix_suffix',
+                    help='global-context pooled views (lex-large uses full)')
+    ap.add_argument('--scalar-bits', type=int, choices=(8, 16), default=8,
+                    help='8 ships scales/biases/norms/decays as 8-bit codes (trained with '
+                         'QAT); lex-large ships them as fp16')
     ap.add_argument('--local-rank', '--local_rank', type=int, default=0,
                     help=argparse.SUPPRESS)
     args = ap.parse_args()
@@ -479,7 +486,8 @@ def main() -> None:
     else:
         log(f'>> precision: {args.precision}, matmul {args.matmul_precision}')
 
-    ds, meta = dp.build(cache=args.dataset, total_tokens=args.total_tokens)
+    ds, meta = dp.build(cache=args.dataset, total_tokens=args.total_tokens,
+                        feature_version=args.feature_version)
     log(f">> corpus: {meta['total_tokens']:,} tokens, {meta['files']:,} files, "
           f"{meta['languages_covered']}/{meta['languages_target']} languages "
           f"({100 * meta['weight_covered']:.1f}% of eval weight)")
@@ -488,7 +496,7 @@ def main() -> None:
 
     real_bench = None
     if args.real_bench_root and os.path.exists(args.real_bench_root):
-        real_bench = RealBenchEval(args.real_bench_root)
+        real_bench = RealBenchEval(args.real_bench_root, feature_version=args.feature_version)
         log(f'>> real-bench: {len(real_bench.examples)} files from '
               f'{args.real_bench_root} -- checkpoint selection uses this, not val')
     elif args.real_bench_root:
@@ -565,7 +573,10 @@ def main() -> None:
                                         binary_ste=args.binary_ste, n_layers=depth,
                                         dilations=tuple(2 ** i for i in range(depth)),
                                         kernel_size=args.kernel_size,
-                                        dropout=args.dropout)).to(device)
+                                        dropout=args.dropout,
+                                        feature_version=args.feature_version,
+                                        ctx_views=args.ctx_views,
+                                        scalar_bits=args.scalar_bits)).to(device)
     size = model.size_report()
     if not args.full_precision and args.weight_budget and size['packed_bytes'] > args.weight_budget:
         raise ValueError(f"packed weights {size['packed_bytes']} exceed budget {args.weight_budget}")
@@ -639,6 +650,8 @@ def main() -> None:
     elif args.teacher_checkpoint:
         teacher_ck = torch.load(args.teacher_checkpoint, map_location=device, weights_only=False)
         teacher = NeuralLexer(LexerConfig(**teacher_ck['config'])).to(device)
+        if teacher.cfg.feature_version != args.feature_version:
+            raise ValueError('teacher and student must share a feature version')
         teacher.load_state_dict(teacher_ck['model_state_dict'])
         teacher.eval()
         teacher.set_quant(False)
@@ -700,6 +713,9 @@ def main() -> None:
         # A resumed checkpoint's stored 'weighted' is a val-split score, not
         # comparable to real-bench selection; re-baseline against the real
         # bench once instead of starting from an unrelated number.
+        # Score it exactly as it ships: a freshly loaded model has not had the
+        # 8-bit scale/scalar path switched on yet.
+        model.set_quant(True)
         best = real_bench.evaluate(model, device)['weighted']
         log(f'>> resumed checkpoint scores {100 * best:.2f}% on the real bench')
     else:

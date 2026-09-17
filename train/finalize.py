@@ -1,9 +1,9 @@
 """
 Post-training pipeline: export, bundle, verify, report.
 
-Run after training finishes. Each step is a precondition for the next, so the
-script stops at the first failure rather than producing a half-updated package —
-several bugs this session came from a bundle and a fixture drifting out of sync.
+Run after training finishes (run_v2.sh leaves the shipped checkpoint in
+./checkpoints_v2). Each step is a precondition for the next, so the script stops
+at the first failure rather than producing a half-updated package.
 
     uv run python finalize.py
 
@@ -38,7 +38,7 @@ def run(desc: str, cmd: list[str], quiet_filter: str | None = None) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument('--checkpoint-dir', default='./checkpoints')
+    ap.add_argument('--checkpoint-dir', default='./checkpoints_v2')
     ap.add_argument('--lex-src', default='../lex/src')
     ap.add_argument('--skip-eval', action='store_true')
     args = ap.parse_args()
@@ -60,13 +60,11 @@ def main() -> None:
                                          '--split', 'test', '--workers', '0'])
         run('error breakdown', py + ['diagnose.py', '--checkpoint', ckpt,
                                      '--workers', '0'])
-        run('FiLM conditioning', py + ['film_check.py', '--checkpoint', ckpt,
-                                       '--workers', '0'])
-        run('points remaining to 95%', py + ['headroom_to_95.py', '--checkpoint', ckpt])
+        run('gpu-lexer verification corpus', py + ['eval_real_bench.py', '--checkpoint', ckpt])
 
     print('\n=== browser checks (need `bun run dev` in demo/) ===')
     print('  shader vs numpy reference : http://localhost:5173/validate.html')
-    print('  head-to-head benchmark    : http://localhost:5173/')
+    print('  head-to-head benchmark    : http://localhost:5173/capture.html (writes src/results.json)')
 
 
 if __name__ == '__main__':

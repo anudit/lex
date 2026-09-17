@@ -23,6 +23,7 @@ const CLASS_NAMES = [
 ];
 
 const JOB_BYTES = 16;  // Job { token_count, token_offset, stage, stride }
+const WORDS_PER_TOKEN = 3;  // packed features per token (see tokenizer.js)
 // Must match MAX_JOBS in the shader: a uniform array needs a compile-time size,
 // so a larger burst of calls is flushed in chunks rather than one dispatch.
 const MAX_JOBS = 64;
@@ -126,7 +127,8 @@ export class LexRuntime {
       this.#buffers.out?.destroy();
       this.#buffers.staging?.destroy();
       this.#buffers.tokens = dev.createBuffer({
-        size: n * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, label: 'tokens',
+        size: n * 4 * WORDS_PER_TOKEN,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, label: 'tokens',
       });
       this.#buffers.out = dev.createBuffer({
         size: n * 4,
@@ -228,11 +230,12 @@ export class LexRuntime {
       this.#ensure(total, maxTokens, jobs.length);
 
       const stride = maxTokens * this.dim;
-      const tokenData = new Uint32Array(total * 2);
+      const wpt = WORDS_PER_TOKEN;
+      const tokenData = new Uint32Array(total * wpt);
       const jobData = new Uint32Array(MAX_JOBS * (JOB_BYTES / 4));
       for (let i = 0; i < jobs.length; i++) {
         const j = jobs[i];
-        tokenData.set(j.packed.subarray(0, j.count * 2), j.offset * 2);
+        tokenData.set(j.packed.subarray(0, j.count * wpt), j.offset * wpt);
         const u = i * (JOB_BYTES / 4);
         jobData[u] = j.count;
         jobData[u + 1] = j.offset;

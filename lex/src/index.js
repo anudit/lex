@@ -20,7 +20,7 @@
 import { tokenize } from './tokenizer.js';
 import { LexRuntime, CLASS_NAMES } from './runtime.js';
 import { unpackWeights } from './weights-codec.js';
-import { WEIGHTS_SYM, WEIGHTS_F16_B85, META, PIPELINE } from './weights.js';
+import { WEIGHTS_PLANES_HEX, WEIGHTS_SCALARS_B64, META, PIPELINE } from './weights.js';
 import { SHADER } from './shader.js';
 
 export { CLASS_NAMES };
@@ -77,7 +77,6 @@ export function toSpans(code, tok, classes) {
   const spans = [];
   let cur = null;
   for (let i = 0; i < tok.count; i++) {
-    if (tok.kinds[i] === 1 || tok.kinds[i] === 2) continue; // whitespace
     const name = CLASS_NAMES[classes[i]] || 'plain';
     if (cur && cur.type === name) {
       cur.end = tok.ends[i];
@@ -100,7 +99,7 @@ let shared = null;
 export async function createLexer(options = {}) {
   const { shared: useShared = true } = options;
   if (useShared && shared) return shared;
-  const { planes, fp } = unpackWeights(WEIGHTS_SYM, WEIGHTS_F16_B85, META);
+  const { planes, fp } = unpackWeights(WEIGHTS_PLANES_HEX, WEIGHTS_SCALARS_B64, META);
   const runtime = await LexRuntime.create({
     shader: SHADER, planes, fp, steps: PIPELINE, dim: META.config.dim,
   });

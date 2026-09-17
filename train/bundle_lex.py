@@ -2,32 +2,21 @@
 Bakes the exported model and generated shader into the `lex` package sources.
 
 The weight blob ships inline rather than as a fetched asset: the model is
-~35 KB, so the extra HTTP round-trip would cost more than the bytes, and
+~28 KB, so the extra HTTP round-trip would cost more than the bytes, and
 inlining keeps `lex` a single import with no network dependency.
 
-Quantized codes ship as one hex character per code rather than densely
-bit-packed. In isolation this compresses much better than base85 of the same
-bytes -- densely packed bits look close to random noise to a general-purpose
-compressor, while per-code symbols preserve the long runs of repeated small
-values the codes actually have, and Brotli exploits that heavily: the SYM
-string alone was 26.8 KB after Brotli against 37.2 KB for base85 of the
-packed bytes. That gain does **not** survive shipping everything in one file,
-though -- measured end to end, the full generated weights.js (SYM + base85
-f16 + JSON metadata, one Brotli stream, which is how a bundled file is
-actually served) came out to 37.24 KB, statistically the same as the old
-all-base85 version's 37.23 KB. Brotli fits one shared entropy model to the
-whole file; mixing SYM's 16-symbol alphabet with base85's 90-symbol one and
-JSON erases most of SYM's own advantage. Kept anyway (not reverted to
-base85) because this code is headed upstream to a sibling project that may
-serve the weight blob as its own request rather than inlined alongside
-metadata, where the isolated-stream number would actually apply -- but do
-not describe this as a proven win for *this* repo's single-file deployment
-without re-measuring the real generated file, the way the isolated-stream
-number nearly was.
+Weights are two strings -- the packed bit-planes as hex of their bytes, and
+the fp16/8-bit scalar tail as base64. Measured after Brotli on the v2 model:
+26.82 KiB for this pair, 27.11 base64+base64, 27.15 hex-per-code, 27.77
+base85+base85, 26.63 raw binary. 1-bit planes are near-random, so keeping whole
+bytes on character boundaries is what compresses best.
 
-`lex/src/weights-codec.js`'s decoders are hand-written mirrors of both
-schemes, so this can just call the stdlib base85 encoder and quant.py's own
-bitplane unpacker.
+The runtime imports `shader.js`, which holds the minified WGSL (comments and
+whitespace stripped, declared names shortened -- wgsl.minify). `shader.wgsl`
+stays the readable generated source for debugging; both come from the same
+wgsl.generate() call.
+
+`lex/src/weights-codec.js` holds the matching decoders.
 """
 
 from __future__ import annotations
@@ -37,40 +26,12 @@ import base64
 import json
 from pathlib import Path
 
-import numpy as np
-
 import wgsl
-from quant import unpack_bitplanes
-
-# One character per quantized code (0-15): every tensor in this model is
-# 1, 3, or 4 bits, so hex digits cover it exactly with no wasted alphabet.
-SYMBOL_ALPHABET = '0123456789ABCDEF'
-
-
-def encode_symbols(planes: np.ndarray, meta: dict) -> tuple[str, dict]:
-    """Hex-per-code encoding of every quantized tensor's codes, concatenated
-    in ascending plane_offset order. Returns the string and the trimmed
-    per-tensor index the decoder needs to slice it back apart."""
-    quantized = sorted(
-        ((name, t) for name, t in meta['tensors'].items() if 'plane_offset' in t),
-        key=lambda kv: kv[1]['plane_offset'])
-    chunks = []
-    index = {}
-    cursor = 0
-    for name, t in quantized:
-        bits, wpp = t['bits'], t['words_per_plane']
-        packed = planes[t['plane_offset']:t['plane_offset'] + t['plane_count']].reshape(bits, wpp)
-        n = wpp * 32
-        codes = unpack_bitplanes(packed, bits, 1, n).ravel()
-        chunks.append(''.join(SYMBOL_ALPHABET[c] for c in codes))
-        index[name] = {'bits': bits, 'offset': cursor, 'words': wpp, 'plane_offset': t['plane_offset']}
-        cursor += n
-    return ''.join(chunks), index
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument('--checkpoint-dir', default='./checkpoints')
+    ap.add_argument('--checkpoint-dir', default='./checkpoints_v2')
     ap.add_argument('--lex-src', default='../lex/src')
     args = ap.parse_args()
 
@@ -81,37 +42,41 @@ def main() -> None:
     meta = json.loads((ck / 'weights.meta.json').read_text())
     blob = (ck / 'weights.bin').read_bytes()
     nw = meta['plane_words']
-    planes = np.frombuffer(blob[:nw * 4], dtype=np.uint32)
-    f16_blob = blob[nw * 4:]
-    f16_b85 = base64.b85encode(f16_blob).decode()
-    sym, sym_index = encode_symbols(planes, meta)
+    planes_hex = blob[:nw * 4].hex()
+    scalars_b64 = base64.b64encode(blob[nw * 4:]).decode()
 
+    if meta.get('feature_version') != 2 or meta.get('scalar_bits') != 8:
+        raise ValueError('bundle_lex.py packages lex-lite exports (feature version 2, 8-bit scalars)')
+    # The scalar blob is the fp16 stream followed by the 8-bit codes;
+    # f16_count is the size of the decoded float table the shader indexes.
     slim = {k: meta[k] for k in
-            ('format', 'config', 'plane_words', 'f16_count',
-             'plane_bytes', 'f16_bytes', 'total_bytes', 'parameters')}
-    slim['sym_tensors'] = sym_index
+            ('format', 'config', 'plane_words', 'f16_count', 'f16_stream_count',
+             'u8_count', 'scalar_segments', 'plane_bytes', 'f16_bytes',
+             'total_bytes', 'parameters')}
     steps = wgsl.pipeline_order(meta['config']['n_layers'])
     (out / 'weights.js').write_text(
         '// Generated by train/bundle_lex.py -- do not edit.\n'
         f'// {meta["parameters"]:,} parameters, {meta["total_bytes"] / 1024:.2f} KB packed.\n\n'
-        f'export const META = {json.dumps(slim, indent=2)};\n\n'
+        f'export const META = {json.dumps(slim, separators=(",", ":"))};\n\n'
         '// Entry points in execution order. `tile` is the tokens-per-workgroup for\n'
         '// the token-parallel passes; 0 means the pass needs the whole sequence in\n'
         '// one workgroup because it is sequential in t.\n'
-        f'export const PIPELINE = {json.dumps(steps)};\n\n'
-        f'export const WEIGHTS_SYM =\n  "{sym}";\n\n'
-        f'export const WEIGHTS_F16_B85 =\n  "{f16_b85}";\n')
+        f'export const PIPELINE = {json.dumps(steps, separators=(",", ":"))};\n\n'
+        f'export const WEIGHTS_PLANES_HEX =\n  "{planes_hex}";\n\n'
+        f'export const WEIGHTS_SCALARS_B64 =\n  "{scalars_b64}";\n')
 
     shader = wgsl.generate(meta)
     (out / 'shader.wgsl').write_text(shader)
-    escaped = shader.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
+    small = wgsl.minify(shader, {s['entry'] for s in steps})
+    escaped = small.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
     (out / 'shader.js').write_text(
-        '// Generated by train/bundle_lex.py from wgsl.py -- do not edit.\n'
+        '// Generated by train/bundle_lex.py from wgsl.py (minified; readable source\n'
+        '// in shader.wgsl) -- do not edit.\n'
         f'export const SHADER = `{escaped}`;\n')
 
     print(f'bundled {meta["total_bytes"] / 1024:.2f} KB of weights '
-          f'({len(sym) / 1024:.1f} KB codes + {len(f16_b85) / 1024:.1f} KB f16 base85) '
-          f'+ {len(shader) / 1024:.1f} KB shader -> {out}')
+          f'({len(planes_hex) / 1024:.1f} KB planes hex + {len(scalars_b64) / 1024:.1f} KB scalars base64) '
+          f'+ {len(small) / 1024:.1f} KB shader (minified from {len(shader) / 1024:.1f}) -> {out}')
 
 
 if __name__ == '__main__':

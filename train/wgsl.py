@@ -1,14 +1,9 @@
 """
 Generates the WGSL compute shaders from the exported weight metadata.
 
-The kernel is split into several entry points rather than one fused dispatch.
-That reverses an earlier decision, and the reason is measured: profiling
-gpu-lexer showed GPU work was ~3% of its latency, so a single workgroup looked
-free. That profile was of *their* model. Ours does far more arithmetic per token,
-and one workgroup is 64 lanes of a GPU that has thousands -- it ran 2x slower
-than gpu-lexer on a single call and 7x slower on a batch.
-
-The split follows where the work actually is. Per token per layer:
+The kernel is split into several entry points rather than one fused dispatch,
+because one workgroup is 64 lanes of a GPU that has thousands. The split follows
+where the work actually is. Per token per layer:
 
     matmuls (proj_in, proj_out, depthwise)   16,704 MACs   99.2%
     bidirectional recurrence                    128 MACs    0.8%
@@ -23,18 +18,21 @@ model is still a single submit and a single mapAsync readback -- which is where
 dimension: workgroup_id.y selects the job.
 
 Tensor offsets are baked in as literals at generation time, so the kernels do no
-indirection to find a weight.
+indirection to find a weight. The generator targets lex-lite (feature version 2:
+three packed words per token, selective-erase recurrence, declaration-gated
+prefix/suffix context); `minify` produces what ships in lex/src/shader.js.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 TILE = 16        # tokens per workgroup for the token-parallel passes
-TILE_POOL = 4    # smaller tile for the pooled-context pass; its rows are 4*DIM
+TILE_POOL = 4    # smaller tile for the pooled-context pass; its rows are 2*DIM
 MAX_JOBS = 64    # uniform job array needs a compile-time size
-N_REGIONS = 8    # per job: nrm, b, fwd, bwd, ctx, pooled stats, film, x_orig.
+N_REGIONS = 8    # per job: nrm, b, fwd, bwd, ctx, (spare), film, x_orig.
                  # Must equal SCRATCH_REGIONS in lex/src/runtime.js: the
                  # region base is NREG * stride * job, so a mismatch makes
                  # one job's film block land on the next job's region 0.
@@ -82,16 +80,16 @@ def _consts(meta: dict) -> str:
     # since film.down has no weight rows for them and dotRed64 unconditionally
     # sums all 64 slots for the up-projection that follows.
     lines.append(f"const FILM_RANK: u32 = {t['film.down']['shape'][0]}u;")
-    if 'global_ctx.decl_gate' in t:
-        lines.append(f"const DG_F: u32 = {t['global_ctx.decl_gate']['f16_offset']}u;")
-    if 'highway_scale' in t:
-        lines.append(f"const HW_F: u32 = {t['highway_scale']['f16_offset']}u;")
+    lines.append(f"const DG_F: u32 = {t['global_ctx.decl_gate']['f16_offset']}u;")
+    lines.append(f"const HW_F: u32 = {t['highway_scale']['f16_offset']}u;")
 
     fo = meta['field_offsets']
     order = list(meta['field_sizes'].keys())
     lines.append('const FIELD_ROW: array<u32, %d> = array<u32, %d>(%s);' % (
         len(order), len(order), ', '.join(f'{fo[k]}u' for k in order)))
     lines.append(f"const FLAG_ROW: u32 = {meta['flag_offset']}u;")
+    # Three packed u32 per token; the third holds gap/indent/line/depth.
+    lines.append("const WPT: u32 = 3u;")
     lines.append(f"const NFIELD: u32 = {len(order)}u;")
     lines.append(f"const NFLAG: u32 = {meta['n_flag_bits']}u;")
     return '\n'.join(lines)
@@ -120,7 +118,7 @@ struct Job {
 
 var<workgroup> tA  : array<f32, 1536>;   // TILE x DIM, reused as TILE x HEAD_HIDDEN
 var<workgroup> tB  : array<f32, 2048>;   // TILE x 2*DIM
-var<workgroup> tP  : array<f32, 1024>;   // TILE_POOL x 4*DIM
+var<workgroup> tP  : array<f32, 1024>;   // TILE_POOL x 2*DIM (sized for 4*DIM)
 var<workgroup> red : array<f32, 64>;
 var<workgroup> lg  : array<f32, 144>;    // TILE x NCLASS
 
@@ -134,7 +132,6 @@ fn tanh_s(x: f32) -> f32 { return tanh(clamp(x, -15.0, 15.0)); }
 fn sigmoid_s(x: f32) -> f32 { return 1.0 / (1.0 + exp(-clamp(x, -30.0, 30.0))); }
 // Matches torch.nn.functional.softplus's numerically-stable form: linear past
 // the point where exp(x) would overflow or the log1p term becomes a no-op.
-fn softplus_s(x: f32) -> f32 { return select(log(1.0 + exp(x)), x, x > 20.0); }
 
 // k-bit weight from bit-planes. Used only where the row index depends on data:
 // the embedding table and the depthwise kernel.
@@ -205,8 +202,9 @@ fn dotB32(w: u32, base: u32) -> f32 {
     return a;
 }
 
-fn tw0(o: u32, i: u32) -> u32 { return tokens[(o + i) * 2u]; }
-fn tw1(o: u32, i: u32) -> u32 { return tokens[(o + i) * 2u + 1u]; }
+fn tw0(o: u32, i: u32) -> u32 { return tokens[(o + i) * WPT]; }
+fn tw1(o: u32, i: u32) -> u32 { return tokens[(o + i) * WPT + 1u]; }
+fn tw2(o: u32, i: u32) -> u32 { return tokens[(o + i) * WPT + 2u]; }
 fn tok_kind(o: u32, i: u32)  -> u32 { return  tw0(o, i)        & 3u; }
 fn tok_flags(o: u32, i: u32) -> u32 { return (tw0(o, i) >> 19u) & 255u; }
 
@@ -221,7 +219,13 @@ fn field_id(o: u32, i: u32, f: u32) -> u32 {
         case 6u:  { return (tw1(o, i) >> 17u) & 15u; }
         case 7u:  { return (tw1(o, i) >> 21u) & 15u; }
         case 8u:  { return (tw1(o, i) >> 25u) & 31u; }
-        default:  { return (tw0(o, i) >> 27u) & 31u; }
+        case 9u:  { return (tw0(o, i) >> 27u) & 31u; }
+        case 10u: { return  tw2(o, i)        & 3u; }
+        case 11u: { return (tw2(o, i) >>  2u) & 3u; }
+        case 12u: { return (tw2(o, i) >>  4u) & 7u; }
+        case 13u: { return (tw2(o, i) >>  7u) & 31u; }
+        case 14u: { return (tw2(o, i) >> 12u) & 3u; }
+        default:  { return (tw2(o, i) >> 14u) & 3u; }
     }
 }
 
@@ -292,10 +296,9 @@ fn embed(@builtin(local_invocation_id) lid: vec3<u32>,
 
 SIGNATURE = r"""
 // ---- document signature and FiLM --------------------------------------------
-// A linear probe recovers the language from this pooled signature at 84%
-// accuracy, and the model was previously only able to use that at the very last
-// layer. These two passes compute it once and turn it into a per-layer, per-
-// channel scale and shift, so it reaches the depthwise conv and the recurrence.
+// The pooled signature is strongly language-separable. These two passes compute
+// it once and turn it into a per-layer, per-channel scale and shift, so language
+// identity reaches the depthwise conv and the recurrence.
 @compute @workgroup_size(64)
 fn sig_pool(@builtin(local_invocation_id) lid: vec3<u32>,
             @builtin(workgroup_id) wid: vec3<u32>) {
@@ -364,76 +367,9 @@ fn film(@builtin(local_invocation_id) lid: vec3<u32>,
 
 # One workgroup: the recurrence is 0.8% of the layer's arithmetic and is
 # sequential in t, so spreading it would cost more in carries than it saves.
-#
-# Two variants: a static per-channel decay (the original design), and a
-# dynamic one where the candidate's own magnitude at each token pushes the
-# decay toward a hard reset -- a channel carrying a strong signal forgets
-# faster, which is what lets a block comment's state clear the instant real
-# code resumes. Chosen per layer at generation time from whether the
-# checkpoint has reset_f/reset_b parameters, not branched at runtime, since
-# the two forms need different tensor offsets baked in as literals.
-SCAN_STATIC = r'''
-@compute @workgroup_size(64)
-fn l{L}_scan(@builtin(local_invocation_id) lid: vec3<u32>,
-             @builtin(workgroup_id) wid: vec3<u32>) {{
-    let d = lid.x;
-    let job = jobs[wid.y];
-    let T = job.token_count;
-    let sbase = NREG * job.stride * wid.y;
-    let r_b = sbase + job.stride;
-    let r_fw = sbase + 2u * job.stride;
-    let r_bw = sbase + 3u * job.stride;
-
-    let af = sigmoid_s(fp[{DF_F}u + d]);
-    let ab = sigmoid_s(fp[{DB_F}u + d]);
-    var hf: f32 = 0.0;
-    for (var t: u32 = 0u; t < T; t = t + 1u) {{
-        hf = af * hf + scratch[r_b + t * DIM + d];
-        scratch[r_fw + t * DIM + d] = hf;
-    }}
-    var hb: f32 = 0.0;
-    for (var t: u32 = 0u; t < T; t = t + 1u) {{
-        let ti = T - 1u - t;
-        hb = ab * hb + scratch[r_b + ti * DIM + d];
-        scratch[r_bw + ti * DIM + d] = hb;
-    }}
-}}
-'''
-
-SCAN_DYNAMIC = r'''
-@compute @workgroup_size(64)
-fn l{L}_scan(@builtin(local_invocation_id) lid: vec3<u32>,
-             @builtin(workgroup_id) wid: vec3<u32>) {{
-    let d = lid.x;
-    let job = jobs[wid.y];
-    let T = job.token_count;
-    let sbase = NREG * job.stride * wid.y;
-    let r_b = sbase + job.stride;
-    let r_fw = sbase + 2u * job.stride;
-    let r_bw = sbase + 3u * job.stride;
-
-    let decay_f = fp[{DF_F}u + d];
-    let decay_b = fp[{DB_F}u + d];
-    let rf = softplus_s(fp[{RF_F}u + d]);
-    let rb = softplus_s(fp[{RB_F}u + d]);
-    var hf: f32 = 0.0;
-    for (var t: u32 = 0u; t < T; t = t + 1u) {{
-        let bt = scratch[r_b + t * DIM + d];
-        let aft = sigmoid_s(decay_f - rf * abs(bt));
-        hf = aft * hf + bt;
-        scratch[r_fw + t * DIM + d] = hf;
-    }}
-    var hb: f32 = 0.0;
-    for (var t: u32 = 0u; t < T; t = t + 1u) {{
-        let ti = T - 1u - t;
-        let bt = scratch[r_b + ti * DIM + d];
-        let abt = sigmoid_s(decay_b - rb * abs(bt));
-        hb = abt * hb + bt;
-        scratch[r_bw + ti * DIM + d] = hb;
-    }}
-}}
-'''
-
+# The per-token decay is the learned per-channel base times (1 - erase), where
+# erase comes from the layer's low-rank gate (computed in l{L}_conv's erase
+# body), so closing delimiters can clear string/comment state.
 SCAN_SELECTIVE = r'''
 @compute @workgroup_size(64)
 fn l{L}_scan(@builtin(local_invocation_id) lid: vec3<u32>,
@@ -645,50 +581,12 @@ fn l{L}_post(@builtin(local_invocation_id) lid: vec3<u32>,
 }}
 '''
 
-# Four pooled views: mean and max are constant across the sequence; the prefix
-# and suffix means vary with position, which is what lets the model tell "this
-# identifier was declared earlier" from "it appears out of nowhere". The running
-# sums are sequential in t, so they share the single-workgroup pass.
-#
-# Two variants, chosen at generation time by whether the checkpoint has a
-# global_ctx.decl_gate parameter: a plain running mean, or one gated per
-# channel by the pooled value itself, so a declaration can outweigh
-# incidental earlier mentions of the same shape rather than being averaged
-# down by them.
-POOL_REDUCE_STATIC = r'''
-// ---- file-scale context ----------------------------------------------------
-@compute @workgroup_size(64)
-fn pool_reduce(@builtin(local_invocation_id) lid: vec3<u32>,
-               @builtin(workgroup_id) wid: vec3<u32>) {
-    let d = lid.x;
-    let job = jobs[wid.y];
-    let T = job.token_count;
-    let hbase = job.stride * wid.y;
-    let sbase = NREG * job.stride * wid.y;
-    let r_pre = sbase;                       // reuses the normalized-input region
-    let r_suf = sbase + job.stride;          // reuses the scan-input region
-    let r_stat = sbase + 5u * job.stride;
-
-    var s: f32 = 0.0;
-    var mx: f32 = -3.4e38;
-    for (var t: u32 = 0u; t < T; t = t + 1u) {
-        let v = hid[hbase + t * DIM + d];
-        s = s + v;
-        mx = max(mx, v);
-        scratch[r_pre + t * DIM + d] = s / f32(t + 1u);
-    }
-    var sb: f32 = 0.0;
-    for (var t: u32 = 0u; t < T; t = t + 1u) {
-        let ti = T - 1u - t;
-        sb = sb + hid[hbase + ti * DIM + d];
-        scratch[r_suf + ti * DIM + d] = sb / f32(t + 1u);
-    }
-    scratch[r_stat + d] = s / max(1.0, f32(T));
-    scratch[r_stat + DIM + d] = mx;
-}
-'''
-
-POOL_REDUCE_DYNAMIC = r'''
+# Prefix and suffix means vary with position, which is what lets the model tell
+# "this identifier was declared earlier" from "it appears out of nowhere". The
+# prefix mean is gated per channel by the pooled value itself, so a declaration
+# can outweigh incidental earlier mentions of the same shape. The running sums
+# are sequential in t, so they share the single-workgroup pass.
+POOL_REDUCE = r'''
 // ---- file-scale context ----------------------------------------------------
 @compute @workgroup_size(64)
 fn pool_reduce(@builtin(local_invocation_id) lid: vec3<u32>,
@@ -700,17 +598,12 @@ fn pool_reduce(@builtin(local_invocation_id) lid: vec3<u32>,
     let sbase = NREG * job.stride * wid.y;
     let r_pre = sbase;                       // reuses the normalized-input region
     let r_suf = sbase + job.stride;          // reuses the scan-input region
-    let r_stat = sbase + 5u * job.stride;
 
     let dgw = fp[{DG_F}u + d];
-    var s: f32 = 0.0;    // plain sum, still feeds the sequence-mean stat below
-    var sg: f32 = 0.0;   // decl-gated sum, feeds the prefix mean only
+    var sg: f32 = 0.0;
     var sdg: f32 = 0.0;
-    var mx: f32 = -3.4e38;
     for (var t: u32 = 0u; t < T; t = t + 1u) {{
         let v = hid[hbase + t * DIM + d];
-        s = s + v;
-        mx = max(mx, v);
         let dg = sigmoid_s(v * dgw);
         sg = sg + v * dg;
         sdg = sdg + dg;
@@ -722,8 +615,6 @@ fn pool_reduce(@builtin(local_invocation_id) lid: vec3<u32>,
         sb = sb + hid[hbase + ti * DIM + d];
         scratch[r_suf + ti * DIM + d] = sb / f32(t + 1u);
     }}
-    scratch[r_stat + d] = s / max(1.0, f32(T));
-    scratch[r_stat + DIM + d] = mx;
 }}
 '''
 
@@ -739,17 +630,12 @@ fn pool_apply(@builtin(local_invocation_id) lid: vec3<u32>,
     let r_pre = sbase;
     let r_suf = sbase + job.stride;
     let r_ctx = sbase + 4u * job.stride;
-    let r_stat = sbase + 5u * job.stride;
     let base_t = wid.x * TILE_POOL;
 
-    let gs0 = planes[GS_P + d * 8u];
-    let gs1 = planes[GS_P + d * 8u + 1u];
-    let gs2 = planes[GS_P + d * 8u + 2u];
-    let gs3 = planes[GS_P + d * 8u + 3u];
-    let gs4 = planes[GS_P + d * 8u + 4u];
-    let gs5 = planes[GS_P + d * 8u + 5u];
-    let gs6 = planes[GS_P + d * 8u + 6u];
-    let gs7 = planes[GS_P + d * 8u + 7u];
+    let gs0 = planes[GS_P + d * 4u];
+    let gs1 = planes[GS_P + d * 4u + 1u];
+    let gs2 = planes[GS_P + d * 4u + 2u];
+    let gs3 = planes[GS_P + d * 4u + 3u];
     let gss = fp[GS_S + d];
     let gsb = fp[GS_BI + d];
     let gg0 = planes[GG_P + d * 2u];
@@ -760,26 +646,20 @@ fn pool_apply(@builtin(local_invocation_id) lid: vec3<u32>,
     for (var j: u32 = 0u; j < TILE_POOL; j = j + 1u) {
         let t = base_t + j;
         let ok = t < T;
-        tP[j * 4u * DIM + d]             = scratch[r_stat + d];
-        tP[j * 4u * DIM + DIM + d]       = scratch[r_stat + DIM + d];
-        tP[j * 4u * DIM + 2u * DIM + d]  = select(0.0, scratch[r_pre + t * DIM + d], ok);
-        tP[j * 4u * DIM + 3u * DIM + d]  = select(0.0, scratch[r_suf + t * DIM + d], ok);
+        tP[j * 2u * DIM + d]       = select(0.0, scratch[r_pre + t * DIM + d], ok);
+        tP[j * 2u * DIM + DIM + d] = select(0.0, scratch[r_suf + t * DIM + d], ok);
         tA[j * DIM + d] = select(0.0, hid[hbase + t * DIM + d], ok);
     }
     workgroupBarrier();
     for (var j: u32 = 0u; j < TILE_POOL; j = j + 1u) {
         let t = base_t + j;
         if (t < T) {
-            let b = j * 4u * DIM;
+            let b = j * 2u * DIM;
             var acc: f32 = 0.0;
             for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs0, k, tP[b + k]); }
             for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs1, k, tP[b + 32u + k]); }
             for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs2, k, tP[b + 64u + k]); }
             for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs3, k, tP[b + 96u + k]); }
-            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs4, k, tP[b + 128u + k]); }
-            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs5, k, tP[b + 160u + k]); }
-            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs6, k, tP[b + 192u + k]); }
-            for (var k: u32 = 0u; k < 32u; k = k + 1u) { acc = acc + m1(gs7, k, tP[b + 224u + k]); }
             let ctx = tanh_s(gsb + gss * acc);
             let g = sigmoid_s(ggb + ggs * dotA64(gg0, gg1, j * DIM));
             scratch[r_ctx + t * DIM + d] = ctx * g;
@@ -881,6 +761,8 @@ fn head(@builtin(local_invocation_id) lid: vec3<u32>,
 def generate(meta: dict) -> str:
     t = meta['tensors']
     cfg = meta['config']
+    if meta.get('feature_version') != 2 or t['global_ctx.summary']['shape'][1] != 2 * cfg['dim']:
+        raise ValueError('wgsl.py generates lex-lite (feature version 2, prefix/suffix context)')
     n = cfg['n_layers']
     dilations = cfg.get('dilations', (1, 2, 4))
     film_up = t['film.up']
@@ -898,29 +780,12 @@ def generate(meta: dict) -> str:
              '// Multi-entry-point pipeline; see the module docstring for the split.\n',
              _consts(meta), PRELUDE, EMBED, signature]
     for i in range(n):
-        if f'layers.{i}.erase_down' in t:
-            scan_body = SCAN_SELECTIVE.format(
-                L=i,
-                DF_F=t[f'layers.{i}.decay_f']['f16_offset'],
-                DB_F=t[f'layers.{i}.decay_b']['f16_offset'],
-            )
-            erase_body = _erase_body(t, i)
-        elif f'layers.{i}.reset_f' in t:
-            scan_body = SCAN_DYNAMIC.format(
-                L=i,
-                DF_F=t[f'layers.{i}.decay_f']['f16_offset'],
-                DB_F=t[f'layers.{i}.decay_b']['f16_offset'],
-                RF_F=t[f'layers.{i}.reset_f']['f16_offset'],
-                RB_F=t[f'layers.{i}.reset_b']['f16_offset'],
-            )
-            erase_body = ''
-        else:
-            scan_body = SCAN_STATIC.format(
-                L=i,
-                DF_F=t[f'layers.{i}.decay_f']['f16_offset'],
-                DB_F=t[f'layers.{i}.decay_b']['f16_offset'],
-            )
-            erase_body = ''
+        scan_body = SCAN_SELECTIVE.format(
+            L=i,
+            DF_F=t[f'layers.{i}.decay_f']['f16_offset'],
+            DB_F=t[f'layers.{i}.decay_b']['f16_offset'],
+        )
+        erase_body = _erase_body(t, i)
         dil = dilations[i] if i < len(dilations) else 1
         parts.append(LAYER_TEMPLATE.format(
             L=i,
@@ -942,14 +807,95 @@ def generate(meta: dict) -> str:
             PO_BI=t[f'layers.{i}.proj_out']['bias_offset'],
         ))
 
-    if 'global_ctx.decl_gate' in t:
-        parts.append(POOL_REDUCE_DYNAMIC.format(DG_F=t['global_ctx.decl_gate']['f16_offset']))
-    else:
-        parts.append(POOL_REDUCE_STATIC)
-
-    hw_term = 'fp[HW_F]' if 'highway_scale' in t else '0.0'
-    parts.append(POOL_HEAD.replace('__HW_TERM__', hw_term))
+    parts.append(POOL_REDUCE.format(DG_F=t['global_ctx.decl_gate']['f16_offset']))
+    parts.append(POOL_HEAD.replace('__HW_TERM__', 'fp[HW_F]'))
     return '\n'.join(parts)
+
+
+_WGSL_TOKEN = re.compile(
+    r'\s+|//[^\n]*|/\*.*?\*/'
+    r'|(?P<num>0[xX][0-9a-fA-F]+[iu]?|(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?[fiuh]?)'
+    r'|(?P<id>[A-Za-z_][A-Za-z0-9_]*)'
+    r'|(?P<op>->|<<=|>>=|<<|>>|<=|>=|==|!=|&&|\|\||\+\+|--|[-+*/%&|^]=|[^\s])',
+    re.S)
+# Names that must survive renaming even if they look declared (`default:`).
+_WGSL_KEEP = frozenset('''
+    alias array bitcast bool break case const const_assert continue continuing
+    default diagnostic discard else enable f16 f32 false fn for function i32 if
+    let loop mat2x2 mat3x3 mat4x4 override private ptr read read_write requires
+    return storage struct switch true u32 uniform var vec2 vec3 vec4 while
+    workgroup compute builtin group binding workgroup_size
+'''.split())
+
+
+def _wgsl_tokens(src: str) -> list[tuple[str, str]]:
+    out = []
+    pos = 0
+    for m in _WGSL_TOKEN.finditer(src):
+        if m.start() != pos:
+            raise ValueError(f'unlexable WGSL at {pos}: {src[pos:pos + 20]!r}')
+        pos = m.end()
+        kind = m.lastgroup
+        if kind is not None:
+            out.append((kind, m.group()))
+    return out
+
+
+def _short_names():
+    import itertools
+    import string
+    first = string.ascii_uppercase
+    rest = string.ascii_letters + string.digits
+    yield from first
+    for n in itertools.count(1):
+        for head in first:
+            for tail in itertools.product(rest, repeat=n):
+                yield head + ''.join(tail)
+
+
+def minify(src: str, keep: set[str]) -> str:
+    """Strip comments and whitespace and shorten the shader's own names.
+
+    A name is renamed when it is declared here (`fn`/`const`/`let`/`var`/
+    `struct`/`alias` or `name:` in a parameter, member or typed binding),
+    is longer than two characters (so swizzles like `.x` and short locals are
+    never touched), is not a WGSL keyword, and is not in `keep` (the entry
+    points the runtime creates pipelines for). Renaming is purely lexical and
+    applied to every occurrence, including `.member` accesses, so a declared
+    name must not coincide with a builtin -- enforced by _WGSL_KEEP and the
+    length rule.
+    """
+    toks = _wgsl_tokens(src)
+    declared = {}
+    for i, (kind, text) in enumerate(toks):
+        if kind != 'id' or len(text) <= 2 or text in _WGSL_KEEP or text in keep:
+            continue
+        prev = toks[i - 1][1] if i else ''
+        nxt = toks[i + 1][1] if i + 1 < len(toks) else ''
+        if prev in ('fn', 'const', 'let', 'var', 'struct', 'alias') or nxt == ':' \
+                or (prev == '>' and i >= 2 and any(t == 'var' for _, t in toks[max(0, i - 6):i])):
+            declared[text] = declared.get(text, 0)
+    counts = {}
+    for kind, text in toks:
+        if kind == 'id' and text in declared:
+            counts[text] = counts.get(text, 0) + 1
+    taken = {t for k, t in toks if k == 'id'}
+    names = (n for n in _short_names() if n not in taken)
+    rename = {old: next(names) for old in sorted(counts, key=lambda n: (-counts[n], n))}
+
+    out: list[str] = []
+    prev_text = ''
+    for kind, text in toks:
+        text = rename.get(text, text) if kind == 'id' else text
+        if out:
+            joined = prev_text + text
+            words = (prev_text[-1:].isalnum() or prev_text[-1:] == '_') and \
+                    (text[:1].isalnum() or text[:1] == '_')
+            if words or len(_wgsl_tokens(joined)) != 2:
+                out.append(' ')
+        out.append(text)
+        prev_text = text
+    return ''.join(out)
 
 
 def pipeline_order(n_layers: int) -> list[dict]:
@@ -981,8 +927,8 @@ def pipeline_order(n_layers: int) -> list[dict]:
 def main() -> None:
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('--meta', default='./checkpoints/weights.meta.json')
-    ap.add_argument('--out', default='./webgpu/shader.wgsl')
+    ap.add_argument('--meta', default='./checkpoints_v2/weights.meta.json')
+    ap.add_argument('--out', default='../lex/src/shader.wgsl')
     args = ap.parse_args()
     meta = json.loads(Path(args.meta).read_text())
     src = generate(meta)

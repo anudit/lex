@@ -25,6 +25,7 @@ import random
 from pathlib import Path
 
 from data_pipeline import split_of
+from languages import grammar_matches_file
 from languages import (
     TARGET_LANGUAGES, TOP25_PUSHER_SHARE, TRAIN_EXCLUDED_LANGUAGES,
     shiki_id, weights,
@@ -51,7 +52,7 @@ def main() -> None:
         if not d.is_dir():
             continue
         pool = [p for p in sorted(d.iterdir())
-                if p.is_file() and (args.all_files
+                if p.is_file() and grammar_matches_file(lang, str(p)) and (args.all_files
                     or split_of(p.read_text(encoding='utf-8', errors='ignore')) == 'test')]
         rng.shuffle(pool)
         # Two passes. The first takes files that fit the size band as-is; the

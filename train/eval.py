@@ -38,8 +38,8 @@ SAMPLES = {
 
 def spans(model: NeuralLexer, code: str, device: torch.device) -> list[dict]:
     """Merge adjacent same-class tokens into renderable spans."""
-    toks = tokenizer.tokenize(code)
-    arrays = tokenizer.tokens_to_arrays(toks)
+    toks = tokenizer.tokenize_v2(code)
+    arrays = tokenizer.tokens_to_arrays(toks, 2)
     feats = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in arrays.items()}
     model.eval()
     model.set_quant(True)
@@ -50,8 +50,6 @@ def spans(model: NeuralLexer, code: str, device: torch.device) -> list[dict]:
     out: list[dict] = []
     cur = None
     for tok, c in zip(toks, preds):
-        if tok.kind in (1, 2):
-            continue
         name = CLASS_NAMES[int(c)]
         if cur and cur['type'] == name:
             cur['end'] = tok.end
@@ -66,8 +64,8 @@ def spans(model: NeuralLexer, code: str, device: torch.device) -> list[dict]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument('--checkpoint', default='./checkpoints/best_model.pt')
-    ap.add_argument('--dataset', default='./corpus/dataset')
+    ap.add_argument('--checkpoint', default='./checkpoints_v2/best_model.pt')
+    ap.add_argument('--dataset', default='./corpus/dataset_v2')
     ap.add_argument('--split', default='test')
     ap.add_argument('--batch-size', type=int, default=32)
     ap.add_argument('--workers', type=int, default=2)

@@ -185,6 +185,29 @@ def shiki_id(lang: str) -> str:
     return SHIKI_ID.get(lang, lang)
 
 
+# Files that sit in a language's corpus directory but are a different dialect
+# than the grammar the directory is labelled with. 500 of 1,697 `css` files were
+# SCSS labelled by the plain-CSS grammar, which leaves `// comments` and nested
+# rules as gold `plain` -- the model's single largest confusion on css was
+# predicting `comment` for exactly that text. TSX under the TypeScript grammar
+# and MDX under Markdown mislabel embedded JSX the same way.
+MISMATCHED_EXTENSIONS: dict[str, frozenset[str]] = {
+    'css': frozenset({'.scss', '.sass', '.less', '.js', '.svelte'}),
+    'typescript': frozenset({'.tsx'}),
+    'markdown': frozenset({'.mdx'}),
+}
+
+
+def grammar_matches_file(lang: str, path: str) -> bool:
+    """False when `path` is a dialect `lang`'s Shiki grammar would mislabel."""
+    bad = MISMATCHED_EXTENSIONS.get(lang)
+    if not bad:
+        return True
+    base = path.rsplit('/', 1)[-1].split('__')[-1]
+    ext = '.' + base.rsplit('.', 1)[1].lower() if '.' in base else ''
+    return ext not in bad
+
+
 if __name__ == '__main__':
     w = weights()
     b = token_budgets(24_000_000)

@@ -57,6 +57,11 @@ class LexerConfig(_base.LexerConfig):
     dilations: tuple[int, ...] = (1, 2, 4, 8)
     film_rank: int = 64
     erase_rank: int = 16
+    # lex-large keeps the base feature layout, four-view context and fp16
+    # scalars; the base config defaults to lex-lite's v2.
+    feature_version: int = 1
+    ctx_views: str = 'full'
+    scalar_bits: int = 16
 
 
 def student_config() -> LexerConfig:

@@ -66,8 +66,8 @@ def run(model, loader, device, quant):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument('--checkpoint', default='./checkpoints/best_model.pt')
-    ap.add_argument('--dataset', default='./corpus/dataset')
+    ap.add_argument('--checkpoint', default='./checkpoints_v2/best_model.pt')
+    ap.add_argument('--dataset', default='./corpus/dataset_v2')
     ap.add_argument('--batch-size', type=int, default=32)
     ap.add_argument('--workers', type=int, default=2)
     args = ap.parse_args()

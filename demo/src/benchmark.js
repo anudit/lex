@@ -24,6 +24,7 @@ import 'prismjs/components/prism-autohotkey.js';
 import 'prismjs/components/prism-autoit.js';
 import 'prismjs/components/prism-awk.js';
 import 'prismjs/components/prism-bash.js';
+import 'prismjs/components/prism-batch.js';
 import 'prismjs/components/prism-basic.js';
 import 'prismjs/components/prism-bnf.js';
 import 'prismjs/components/prism-brainfuck.js';
@@ -137,12 +138,13 @@ import 'prismjs/components/prism-toml.js';
 import 'prismjs/components/prism-hcl.js';
 
 import {
-  makeShikiAdapter, makeSugarHighAdapter, makePrismAdapter, makeHljsAdapter, makeSpanAdapter,
-  agreement,
+  makeShikiAdapter, makeShikiAdapterGpu, makeSugarHighAdapter, makePrismAdapter, makeHljsAdapter,
+  makeSpanAdapter, agreement, agreementConfidenceGated,
 } from './adapters.js';
 import { CORPUS, EXCLUDED, WEIGHTS } from './corpus.js';
 import { UNSEEN } from './corpus_unseen.js';
 import { CORPUS_LARGE, WEIGHTS_LARGE } from './corpus_large.js';
+import { CORPUS_GPU, WEIGHTS_GPU } from './corpus_gpu.js';
 
 export const PRISM_LANG = {
   abnf: 'abnf', actionscript: 'actionscript', ada: 'ada', applescript: 'applescript', arduino: 'arduino',
@@ -171,6 +173,10 @@ export const PRISM_LANG = {
   vbnet: 'vbnet', verilog: 'verilog', vhdl: 'vhdl', vim: 'vim', wasm: 'wasm',
   wren: 'wren', x86asm: 'nasm', xml: 'markup', xquery: 'xquery', yaml: 'yaml',
   zig: 'zig',
+  // gpu-lexer corpus family keys (corpus_gpu.js uses GitHub language-family
+  // names, not raw Shiki ids, matching gpu-lexer's own correctness.js).
+  batchfile: 'batch', plpgsql: 'sql', 'objective-c': 'objectivec',
+  assembly: 'nasm', procfile: 'bash',
 };
 
 export async function boot(onStatus = () => {}) {
@@ -179,13 +185,14 @@ export async function boot(onStatus = () => {}) {
   // shiki_id() falls back to the raw Highlight.js id for languages Shiki
   // doesn't actually bundle (mizar, rib, step21, ...) -- passing an unknown
   // id to createHighlighter throws, so only request ids Shiki really has.
-  const langs = [...new Set([...CORPUS, ...UNSEEN, ...CORPUS_LARGE].map((c) => c.shikiLang))]
+  const langs = [...new Set([...CORPUS, ...UNSEEN, ...CORPUS_LARGE, ...CORPUS_GPU].map((c) => c.shikiLang))]
     .filter((l) => !['txt', 'text', 'plaintext'].includes(l))
     .filter((l) => l in bundledLanguages);
   const highlighter = await createHighlighter({ themes: ['github-dark'], langs });
 
   const adapters = [
     makeShikiAdapter(highlighter),
+    makeShikiAdapterGpu(highlighter),
     makeSugarHighAdapter(sugarParse, sugarLanguages),
     makePrismAdapter(Prism, PRISM_LANG),
     makeHljsAdapter(hljs),
@@ -277,6 +284,65 @@ export async function measure(adapters, corpus, label, onStatus = () => {}, opts
   return { label, nFiles: corpus.length, present, rows };
 }
 
+/** Same shape as measure(), but scores every engine under gpu-lexer's own
+ * scope->class taxonomy and confidence-gated denominator (see
+ * makeShikiAdapterGpu / agreementConfidenceGated in adapters.js), so results
+ * are directly comparable to gpu-lexer's own published correctness numbers
+ * rather than lex's scope_map.mjs-defined ground truth.
+ */
+const NEVER = (length) => new Uint8Array(length).fill(255);
+
+export async function measureGpu(adapters, corpus, label, onStatus = () => {}, opts = {}) {
+  const weights = opts.weights ?? WEIGHTS;
+  const ref = adapters.find((a) => a.name === 'Shiki (gpu-lexer taxonomy)');
+  const others = adapters.filter((a) => !a.reference);
+  const tally = new Map(others.map((a) => [a.name, new Map()]));
+
+  for (let i = 0; i < corpus.length; i++) {
+    const { code, lang, shikiLang } = corpus[i];
+    if (i % 10 === 0) onStatus(`${label} — ${i}/${corpus.length} files`);
+    let refCls, refConf;
+    try {
+      ({ cls: refCls, conf: refConf } = ref.classesAndConfidence(code, shikiLang));
+    } catch { continue; }
+    for (const a of others) {
+      const t = tally.get(a.name);
+      if (!t.has(lang)) t.set(lang, { hit: 0, total: 0 });
+      const bucket = t.get(lang);
+      let got = null;
+      try { got = await classesOf(a, code, lang, shikiLang); } catch { got = null; }
+      // No support (or a throw) counts as fully wrong, not skipped -- an
+      // engine that can't highlight a language doesn't get to leave it out
+      // of its own denominator. NEVER (256) can't match any class byte.
+      const { hit, total } = agreementConfidenceGated(code, refCls, refConf, got ?? NEVER(code.length));
+      bucket.hit += hit;
+      bucket.total += total;
+    }
+    if (i % 10 === 0) await new Promise((r) => setTimeout(r));
+  }
+
+  const present = [...new Set(corpus.map((c) => c.lang))];
+  const rows = [{ name: 'Shiki (gpu-lexer taxonomy)', weighted: 1, micro: 1, reference: true, perLang: {} }];
+  for (const a of others) {
+    const perLang = {};
+    let hit = 0;
+    let total = 0;
+    for (const [lang, b] of tally.get(a.name)) {
+      perLang[lang] = b.total ? b.hit / b.total : 0;
+      hit += b.hit;
+      total += b.total;
+    }
+    const scored = Object.keys(perLang);
+    const wsum = scored.reduce((acc, l) => acc + (weights[l] ?? 0), 0);
+    const weighted = wsum
+      ? scored.reduce((acc, l) => acc + (weights[l] ?? 0) * perLang[l], 0) / wsum
+      : 0;
+    rows.push({ name: a.name, weighted, micro: total ? hit / total : 0, perLang });
+  }
+  rows.sort((a, b) => b.weighted - a.weighted);
+  return { label, nFiles: corpus.length, present, rows };
+}
+
 export async function measureAll(onStatus = () => {}) {
   const adapters = await boot(onStatus);
   // Each tab compares its own model against the shared field (gpu-lexer, Prism,
@@ -290,6 +356,8 @@ export async function measureAll(onStatus = () => {}) {
     corpora: [
       { ...await measure(liteAdapters, UNSEEN, 'unseen repos', onStatus), group: 'lite' },
       { ...await measure(liteAdapters, CORPUS, 'held-out files', onStatus), group: 'lite' },
+      { ...await measureGpu(liteAdapters, CORPUS_GPU, 'gpu-lexer verification corpus', onStatus,
+          { weights: WEIGHTS_GPU }), group: 'lite' },
       { ...await measure(largeAdapters, CORPUS_LARGE, 'train_large corpus', onStatus,
           { weights: WEIGHTS_LARGE, excluded: [] }), group: 'large' },
     ],

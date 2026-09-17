@@ -66,7 +66,7 @@ app.innerHTML = `
   <section class="playground-section">
     <div class="section-head">
       <h2>Live Playground</h2>
-      <span class="meta">WebGPU neural highlighter &middot; real-time inference</span>
+      <span class="meta">WebGPU neural highlighter &middot; <span id="playground-mode">real-time inference</span></span>
     </div>
     <div class="playground-toolbar">
       <span class="toolbar-label">Samples:</span>
@@ -75,11 +75,17 @@ app.innerHTML = `
       <button class="sample-btn" data-sample="rust" type="button">Rust</button>
       <button class="sample-btn" data-sample="cpp" type="button">C++</button>
       <button class="sample-btn" data-sample="sql" type="button">SQL</button>
+      <button class="sample-btn" data-sample="mixed" type="button">Mixed</button>
     </div>
     <div class="playground-editor-wrap">
       <pre class="playground-highlight" aria-hidden="true"><code id="playground-code"></code></pre>
       <textarea id="playground-input" class="playground-input" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Type or paste code in any language..."></textarea>
     </div>
+    <label class="playground-oneline" id="playground-oneline" hidden>
+      <span class="toolbar-label">&lt;input&gt;:</span>
+      <input id="playground-line" type="text" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
+        value="const url = new URL('/api?q=' + encodeURIComponent(query), BASE); // one line">
+    </label>
     <div class="playground-footer">
       <div class="playground-stats">
         <span class="stat-dot" id="stat-dot"></span>
@@ -195,6 +201,12 @@ function renderCorrectness(rows, label, nFiles, present, group) {
           files in ${present.size} languages, renormalized over the languages each engine
           was scored on. highlight.js is not scored against its own labels, so its row
           covers the Shiki-taught grammars only.`
+        : label === 'gpu-lexer verification corpus'
+        ? `Same ${nFiles}-file corpus and GitHub-popularity weighting gpu-lexer's own
+          correctness benchmark uses, scored with gpu-lexer's own scope-to-class
+          taxonomy and confidence-gated denominator (ambiguous tokens excluded from
+          both hit and total) instead of lex's -- so these numbers are directly
+          comparable to gpu-lexer's own published figures.`
         : `Popularity-weighted agreement with Shiki over ${nFiles} files in
           ${present.size} languages, renormalized over the languages present.`}</p>
       ${renderAgreementTable(rows.find((r) => r.name === 'lex-large (ours)') ?? rows.find((r) => r.name === 'lex-lite (ours)'), present, label)}
@@ -386,8 +398,57 @@ FROM users u
 LEFT JOIN orders o ON o.user_id = u.id
 WHERE u.status = 'active'
 GROUP BY u.id, u.name
-HAVING COUNT(o.id) > 5;`
+HAVING COUNT(o.id) > 5;`,
+  mixed: `# Deploy notes
+
+\`\`\`sh
+export PORT=8080 && ./server --verbose "$CONFIG"
+\`\`\`
+
+def handler(event):
+    return {"status": 200, "body": event["path"]}
+
+SELECT id, name FROM users WHERE active = true;
+
+fn main() { println!("{}", 42_u32.pow(2)); }
+
+<button class="primary" onclick="go()">Go</button>`
 };
+
+// ---- OpaqueRange + CSS Custom Highlight API (Chrome 152+) ------------------
+// When available, spans are painted straight onto the <textarea>/<input> text:
+// each span becomes an OpaqueRange (element.createValueRange) inside one
+// Highlight per class, styled by ::highlight(lex-*) in style.css. No overlay,
+// no mirrored markup, and the native caret, selection and IME all stay intact.
+const NATIVE_HIGHLIGHT = typeof HTMLTextAreaElement !== 'undefined'
+  && 'createValueRange' in HTMLTextAreaElement.prototype
+  && typeof CSS !== 'undefined' && 'highlights' in CSS
+  && typeof Highlight !== 'undefined';
+
+const PAINTED_TYPES = ['comment', 'string', 'number', 'keyword', 'type', 'function', 'constant', 'operator'];
+const highlightByType = new Map();
+if (NATIVE_HIGHLIGHT) {
+  for (const type of PAINTED_TYPES) {
+    const h = new Highlight();
+    highlightByType.set(type, h);
+    CSS.highlights.set(`lex-${type}`, h);
+  }
+}
+const paintedRanges = new WeakMap();  // element -> [[Highlight, OpaqueRange], ...]
+
+function paintRanges(el, spans) {
+  for (const [h, r] of paintedRanges.get(el) ?? []) h.delete(r);
+  const added = [];
+  const len = el.value.length;
+  for (const s of spans) {
+    const h = highlightByType.get(s.type);
+    if (!h || s.end > len) continue;
+    const r = el.createValueRange(s.start, s.end);
+    h.add(r);
+    added.push([h, r]);
+  }
+  paintedRanges.set(el, added);
+}
 
 function escapeHtml(str) {
   return str
@@ -444,6 +505,7 @@ async function triggerHighlight() {
 
   if (!code.length) {
     playgroundCode.innerHTML = '';
+    if (NATIVE_HIGHLIGHT) paintRanges(playgroundInput, []);
     if (inferenceTime) inferenceTime.textContent = '0.00 ms';
     return;
   }
@@ -474,7 +536,8 @@ async function triggerHighlight() {
     const dt = performance.now() - t0;
 
     if (seq === playgroundSeq) {
-      playgroundCode.innerHTML = renderSpansHtml(code, spans);
+      if (NATIVE_HIGHLIGHT) paintRanges(playgroundInput, spans);
+      else playgroundCode.innerHTML = renderSpansHtml(code, spans);
       if (inferenceTime) inferenceTime.textContent = `${dt.toFixed(2)} ms`;
       if (statDot) {
         statDot.style.background = 'var(--green)';
@@ -496,7 +559,31 @@ async function triggerHighlight() {
   }
 }
 
+const playgroundLine = document.getElementById('playground-line');
+let lineSeq = 0;
+async function highlightLine() {
+  const seq = ++lineSeq;
+  const lexer = await getLexer();
+  if (!lexer) return;
+  const spans = await lexer.highlight(playgroundLine.value);
+  if (seq === lineSeq) paintRanges(playgroundLine, spans);
+}
+
 if (playgroundInput && playgroundPre) {
+  const mode = document.getElementById('playground-mode');
+  if (NATIVE_HIGHLIGHT) {
+    playgroundPre.parentElement.classList.add('native-highlight');
+    if (mode) mode.textContent = 'OpaqueRange + CSS Highlight API, painted in the <textarea>';
+    const oneline = document.getElementById('playground-oneline');
+    if (oneline && playgroundLine && navigator.gpu) {
+      oneline.hidden = false;
+      playgroundLine.addEventListener('input', highlightLine);
+      highlightLine();
+    }
+  } else if (mode) {
+    mode.textContent = 'overlay rendering (OpaqueRange needs Chrome 152+)';
+  }
+
   playgroundInput.addEventListener('scroll', () => {
     playgroundPre.scrollTop = playgroundInput.scrollTop;
     playgroundPre.scrollLeft = playgroundInput.scrollLeft;
@@ -507,9 +594,7 @@ if (playgroundInput && playgroundPre) {
       e.preventDefault();
       const start = playgroundInput.selectionStart;
       const end = playgroundInput.selectionEnd;
-      const val = playgroundInput.value;
-      playgroundInput.value = val.substring(0, start) + '  ' + val.substring(end);
-      playgroundInput.selectionStart = playgroundInput.selectionEnd = start + 2;
+      playgroundInput.setRangeText('  ', start, end, 'end');
       triggerHighlight();
     }
   });

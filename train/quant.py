@@ -2,10 +2,8 @@
 Quantization primitives shared by the model and the exporter.
 
 The single most important property here is that training and export agree
-exactly. The previous implementation used one scale in `forward`
-(0.5 * (|learned| + mean|W|)) and a different one when packing (mean|W|), so the
-exported weights were not the weights that were trained. Every quantizer below
-exposes one `effective()` method that both paths call.
+exactly: every quantizer below exposes one `effective()` method (and one
+`_scale()`) that both the forward pass and the exporter call.
 
 Weights are stored as bit-planes: a k-bit tensor becomes k separate 1-bit planes,
 each packing 32 values per u32. This is exact for any k (3-bit does not divide 32
@@ -117,6 +115,62 @@ def row_scale(weight: torch.Tensor, bits: int,
     return per_group[groups].unsqueeze(-1).clamp_min(1e-8)
 
 
+# ---------------------------------------------------------------------------
+# 8-bit scalars
+#
+# Scales, biases, norm gains, decay logits and gates were 5,006 fp16 values --
+# 27% of the packed file. They now ship as 8-bit codes with one fp16 header per
+# tensor, and training sees exactly those values (straight-through).
+#
+#   int8   symmetric per tensor: header = step, value = code * step
+#   log8   for positive scales, uniform in log space: header = (lo, step),
+#          value = exp(lo + code * step); ~2% relative resolution across a
+#          100x range, where a linear grid would crush the small scales
+# ---------------------------------------------------------------------------
+
+def int8_step(x: torch.Tensor) -> torch.Tensor:
+    # Floored so an all-zero tensor (fresh gates) still has an fp16-representable
+    # step, then rounded through fp16 because that is the header that ships.
+    step = (x.detach().abs().max() / 127.0).clamp_min(1e-4)
+    return step.to(torch.float16).to(x.dtype)
+
+
+def fake_int8(x: torch.Tensor) -> torch.Tensor:
+    step = int8_step(x)
+    q = torch.clamp(torch.round(x / step), -127, 127) * step
+    return x + (q - x).detach()
+
+
+def int8_codes(x: np.ndarray) -> tuple[np.ndarray, float]:
+    t = torch.from_numpy(np.asarray(x, dtype=np.float32))
+    step = float(int8_step(t))
+    codes = np.clip(np.round(x / step), -127, 127).astype(np.int8)
+    return codes, step
+
+
+def log8_header(s: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    l = torch.log(s.detach().clamp_min(1e-8))
+    lo, hi = l.min(), l.max()
+    # fp16 headers: round-trip them so training uses what ships.
+    lo = lo.to(torch.float16).to(s.dtype)
+    step = ((hi - lo) / 255.0).clamp_min(1e-4).to(torch.float16).to(s.dtype)
+    return lo, step
+
+
+def fake_log8(s: torch.Tensor) -> torch.Tensor:
+    lo, step = log8_header(s)
+    code = torch.clamp(torch.round((torch.log(s.clamp_min(1e-8)) - lo) / step), 0, 255)
+    q = torch.exp(lo + code * step)
+    return s + (q - s).detach()
+
+
+def log8_codes(s: np.ndarray) -> tuple[np.ndarray, float, float]:
+    t = torch.from_numpy(np.asarray(s, dtype=np.float32))
+    lo, step = log8_header(t)
+    code = torch.clamp(torch.round((torch.log(t.clamp_min(1e-8)) - lo) / step), 0, 255)
+    return code.to(torch.uint8).numpy(), float(lo), float(step)
+
+
 class QuantLinear(nn.Module):
     """Linear layer with k-bit quantization-aware training."""
 
@@ -131,19 +185,23 @@ class QuantLinear(nn.Module):
         self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
         self.quant_enabled = True
         self.binary_ste = True
+        self.scale_quant = False
+
+    def _scale(self) -> torch.Tensor:
+        s = row_scale(self.weight, self.bits)
+        return fake_log8(s) if self.scale_quant else s
 
     def effective(self) -> torch.Tensor:
         if not self.quant_enabled:
             return self.weight
-        return quantize(self.weight, self.bits, row_scale(self.weight, self.bits),
-                        self.binary_ste)
+        return quantize(self.weight, self.bits, self._scale(), self.binary_ste)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.nn.functional.linear(x, self.effective(), self.bias)
 
     def export_tensors(self) -> dict:
         w = self.weight.detach()
-        s = row_scale(w, self.bits)
+        s = self._scale().detach()
         codes = _codes(w, s, self.bits)
         return {
             'kind': 'linear', 'bits': self.bits,
@@ -170,6 +228,7 @@ class QuantEmbedding(nn.Module):
         self.bits = bits
         self.weight = nn.Parameter(torch.randn(num_embeddings, dim) * 0.06)
         self.quant_enabled = True
+        self.scale_quant = False
         if groups is None:
             self.register_buffer('groups', None, persistent=False)
             self.n_scales = num_embeddings
@@ -178,7 +237,8 @@ class QuantEmbedding(nn.Module):
             self.n_scales = int(groups.max().item()) + 1
 
     def _scale(self) -> torch.Tensor:
-        return row_scale(self.weight, self.bits, self.groups, self.n_scales)
+        s = row_scale(self.weight, self.bits, self.groups, self.n_scales)
+        return fake_log8(s) if self.scale_quant else s
 
     def effective(self) -> torch.Tensor:
         if not self.quant_enabled:
@@ -190,7 +250,7 @@ class QuantEmbedding(nn.Module):
 
     def export_tensors(self) -> dict:
         w = self.weight.detach()
-        s = row_scale(w, self.bits, self.groups, self.n_scales)
+        s = self._scale().detach()
         # Only the distinct group scales ship; the group id of a row is implied by
         # the field offset table the shader already needs.
         if self.groups is None:

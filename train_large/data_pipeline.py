@@ -35,6 +35,9 @@ teacher_folds = _base.teacher_folds
 
 
 def build(*args, total_tokens: int | None = None, **kwargs):
+    # The base pipeline defaults to lex-lite's v2 layout and cache.
+    kwargs.setdefault('feature_version', 1)
+    kwargs.setdefault('cache', './corpus/dataset')
     if total_tokens is None:
         cache = kwargs.get('cache', './corpus/dataset')
         meta_path = Path(cache) / 'meta.json' if cache else None

@@ -3,13 +3,9 @@ Evaluate a checkpoint against gpu-lexer's own held-out verification corpus,
 using gpu-lexer's own scoring methodology (token-level exact match, confidence-
 gated, weighted by GitHub pusher share of the top 25 languages).
 
-This exists because lex's own val/test split -- built from the same corpus and
-sampling era as train -- can silently drift from what the public gpu-lexer
-benchmark actually reports. Scoring against the real corpus with the real
-methodology closes that gap: the number this script prints is the number that
-should show up on the website, not a proxy for it. `RealBenchEval` is also
-imported by train.py so checkpoint selection during training is driven by this
-same metric, not just lex's own val split.
+lex's own val/test split comes from the same corpus as train; this corpus is
+independently sourced, so it is what checkpoint selection uses. `RealBenchEval`
+is imported by train.py for exactly that.
 
 Requires the gpu-lexer repo checked out alongside this one and its
 verification shard already built (`pnpm corpus:fetch -- --split verification
@@ -48,9 +44,15 @@ def _char_classes_from_source_labels(source: str, source_labels: list[dict]) -> 
     """gpu-lexer's sourceLabels are [{from, to, class, confidence?}, ...],
     disjoint and sorted. Expand to a per-character class array, matching
     decode_rle's convention (9 = masked/uncovered)."""
+    # gpu-lexer's own correctness.js stores confidence in a Uint8Array, which
+    # truncates fractional confidence (0.5, 0.25) to 0 and then excludes it from
+    # scoring entirely (`if (!supervisionWeights[index]) continue`). `== 0` here
+    # never matched real data (confidence is 1, 0.5, or 0.25, never literally 0),
+    # so this used to silently score every span including the ambiguous ones --
+    # `< 1` is what actually reproduces their confidence-gated denominator.
     out = np.full(len(source), 9, dtype=np.uint8)
     for label in source_labels:
-        if label.get('confidence') == 0:
+        if label.get('confidence', 1) < 1:
             continue
         cls = CLASS_NAMES.index(label['class'])
         out[label['from']:label['to']] = cls
@@ -61,7 +63,9 @@ class RealBenchEval:
     """Loads gpu-lexer's verification shard once; `evaluate()` scores any
     checkpoint's model against it cheaply (no re-parsing the shard)."""
 
-    def __init__(self, gpu_lexer_root: str | Path = DEFAULT_GPU_LEXER_ROOT, top: int = 25):
+    def __init__(self, gpu_lexer_root: str | Path = DEFAULT_GPU_LEXER_ROOT, top: int = 25,
+                 feature_version: int = 2):
+        self.feature_version = feature_version
         root = Path(gpu_lexer_root)
         popularity = json.loads(
             (root / 'packages/training/data/language-popularity.json').read_text())
@@ -81,13 +85,13 @@ class RealBenchEval:
                 continue
             source = item['source']
             char_cls = _char_classes_from_source_labels(source, item['sourceLabels'])
-            toks = tokenizer.tokenize(source)
+            toks = tokenizer.tokenize_version(source, feature_version)
             if not toks:
                 continue
             gold = align(toks, char_cls)
             if (gold != MASK).sum() == 0:
                 continue
-            self.examples.append((family, toks, gold))
+            self.examples.append((family, tokenizer.tokens_to_arrays(toks, feature_version), gold))
 
     @torch.no_grad()
     def evaluate(self, model, device) -> dict:
@@ -95,10 +99,9 @@ class RealBenchEval:
         model.eval()
         per_family = defaultdict(lambda: {'correct': 0, 'total': 0})
         boundary_tp = boundary_pred = boundary_gold = 0
-        for family, toks, gold in self.examples:
-            arrays = tokenizer.tokens_to_arrays(toks)
+        for family, arrays, gold in self.examples:
             feats = {k: torch.from_numpy(v).unsqueeze(0).to(device) for k, v in arrays.items()}
-            valid = torch.ones(1, len(toks), dtype=torch.bool, device=device)
+            valid = torch.ones(1, len(gold), dtype=torch.bool, device=device)
             logits = model(feats, valid)
             preds = logits.argmax(-1).squeeze(0).cpu().numpy()
 
@@ -139,7 +142,7 @@ class RealBenchEval:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument('--checkpoint', default='./checkpoints_hero3_cont/best_model.pt')
+    ap.add_argument('--checkpoint', default='./checkpoints_v2/best_model.pt')
     ap.add_argument('--gpu-lexer-root', default=str(DEFAULT_GPU_LEXER_ROOT))
     ap.add_argument('--top', type=int, default=25)
     args = ap.parse_args()
@@ -147,12 +150,13 @@ def main() -> None:
     from model import LexerConfig, NeuralLexer
     from train import pick_device
 
-    bench = RealBenchEval(args.gpu_lexer_root, args.top)
+    device = pick_device()
+    ck = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    bench = RealBenchEval(args.gpu_lexer_root, args.top,
+                          feature_version=ck.get('config', {}).get('feature_version', 1))
     print(f'loaded {len(bench.examples)} verification items '
           f'across {len(bench.top_families)} languages')
 
-    device = pick_device()
-    ck = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model = NeuralLexer(LexerConfig(**ck['config']) if 'config' in ck else LexerConfig()).to(device)
     model.load_state_dict(ck['model_state_dict'])
     model.set_quant(True)

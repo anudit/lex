@@ -2,7 +2,7 @@
 
 Syntax highlighting from a 106.77 KiB neural model running on WebGPU, covering
 185 Highlight.js grammars. This is the larger sibling of
-[`lex`](../lex) (36.15 KiB, 52 languages, referred to as **lex-lite** where the
+[`lex`](../lex) (28.09 KiB, 52 languages, referred to as **lex-lite** where the
 two are compared) -- same API, same zero-dependency, no-grammar approach, more
 parameters and wider language coverage.
 

@@ -42,7 +42,12 @@ HOLDOUT_REPOS: dict[str, list[str]] = {
     'ruby': ['discourse/discourse', 'mastodon/mastodon', 'rubygems/rubygems',
              'rails/thor', 'ruby/spec', 'jekyll/minima'],
     'css': ['tailwindlabs/tailwindcss', 'ionic-team/ionic-framework', 'uikit/uikit',
-            'primefaces/primeng'],
+            'primefaces/primeng',
+            # The four above are almost entirely SCSS, which the demo corpus now
+            # excludes from `css` (wrong grammar); these ship plain CSS.
+            'sindresorhus/github-markdown-css', 'andybrewer/mvp',
+            'sindresorhus/modern-normalize', 'csstools/sanitize.css', 'jdan/98.css',
+            'raphaelfabeni/css-loader', 'vinibiavatti1/TuiCss'],
     'markdown': ['vuejs/docs', 'rust-lang/book', 'facebook/docusaurus',
                  'remix-run/remix', 'pnpm/pnpm.io', 'eslint/eslint.org'],
     'rust': ['rust-lang/rustlings', 'denoland/deno', 'alacritty/alacritty', 'nushell/nushell'],

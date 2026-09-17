@@ -1,8 +1,11 @@
 """
-Universal Code Tokenizer for Neural Lexer.
-Matches the language-agnostic fast CPU scanner semantics of gpu-lexer/sugar-high
-with expanded hash capacity: 512 primary buckets against gpu-lexer's 256, which is
-where keyword/identifier collisions come from, and 128 secondary to match it.
+Language-agnostic CPU pre-tokenizer.
+
+`tokenize_v2` produces lex-lite's input: word and symbol tokens only, with
+whitespace folded into per-token fields (see the section below). `tokenize` is
+the underlying scanner -- runs of word / space / newline / symbol with length,
+edge-character, hash, flag and transition features -- and is also the input
+layout lex-large trains on. lex/src/tokenizer.js mirrors `tokenize_v2` exactly.
 """
 
 import numpy as np
@@ -47,7 +50,9 @@ class Token:
     __slots__ = (
         'kind', 'start', 'end', 'first_char', 'last_char',
         'len_bucket', 'hash1', 'hash2', 'flags',
-        'trans_prev', 'trans_next', 'sym_prev', 'sym_next', 'text'
+        'trans_prev', 'trans_next', 'sym_prev', 'sym_next', 'text',
+        # Feature-version-2 fields; unused (and unset) in version 1.
+        'gap_prev', 'gap_next', 'indent', 'line_first', 'brace_depth', 'paren_depth',
     )
     def __init__(self, kind, start, end, first_char, last_char, len_b, h1, h2, flags, text):
         self.kind = kind
@@ -156,7 +161,127 @@ def tokenize(text: str) -> list[Token]:
 
     return tokens
 
-def tokens_to_arrays(tokens: list[Token]):
+# ---------------------------------------------------------------------------
+# lex-lite features (feature_version=2)
+#
+# Whitespace and newline runs leave the sequence, so every depthwise-conv tap
+# and recurrent step is spent on a real token. Their information survives as
+# per-token fields:
+#
+#   gap_prev / gap_next  what separates this token from its non-blank neighbour:
+#                        0 nothing, 1 horizontal space, 2 one newline, 3 blank line
+#   indent               leading-whitespace width of the token's line, bucketed
+#   line_first           first non-blank character of the token's line (0 = word)
+#   brace_depth          `{}` nesting, 0..3+
+#   paren_depth          `()` + `[]` nesting, 0..3+
+#
+# Transition ids still require the two characters to be physically adjacent;
+# symbol-pair hashes pair nearest non-blank neighbours. hash1 uses 256 buckets.
+# ---------------------------------------------------------------------------
+
+LINE_FIRST_SYMBOLS = '!"#$%&\'()*+,-./:;<=>?@[\\]^`{|}~'
+_LINE_FIRST = {ord(ch): i + 1 for i, ch in enumerate(LINE_FIRST_SYMBOLS)}
+assert len(_LINE_FIRST) == 31
+HASH1_BUCKETS_V2 = 256
+
+
+def indent_bucket(width: int) -> int:
+    if width <= 2:
+        return width
+    if width <= 4:
+        return 3
+    if width <= 16:
+        return 4 + (width - 5) // 4
+    return 7
+
+
+def tokenize_v2(text: str) -> list[Token]:
+    raw = tokenize(text)
+    out: list[Token] = []
+    spaces = False
+    newlines = 1          # the file start behaves like a line start
+    indent_width = 0
+    indent_tab = False
+    line_first = -1
+    braces = 0
+    parens = 0
+    for tok in raw:
+        if tok.kind == 2:
+            newlines += 1
+            indent_width = 0
+            indent_tab = False
+            line_first = -1
+            continue
+        if tok.kind == 1:
+            spaces = True
+            if line_first < 0:
+                for ch in tok.text:
+                    indent_width += 4 if ch == '\t' else 1
+                    indent_tab = indent_tab or ch == '\t'
+            continue
+        if line_first < 0:
+            line_first = 0 if tok.kind == 0 else _LINE_FIRST.get(tok.first_char, 0)
+        tok.hash1 &= HASH1_BUCKETS_V2 - 1
+        tok.gap_prev = 3 if newlines >= 2 else 2 if newlines == 1 else 1 if spaces else 0
+        tok.gap_next = 2
+        tok.indent = indent_bucket(indent_width)
+        tok.line_first = line_first
+        if indent_tab:
+            tok.flags |= 32
+        c = tok.first_char if tok.kind == 3 else -1
+        if c == 123:
+            tok.brace_depth = min(3, braces)
+            braces += 1
+        elif c == 125:
+            braces = max(0, braces - 1)
+            tok.brace_depth = min(3, braces)
+        else:
+            tok.brace_depth = min(3, braces)
+        if c in (40, 91):
+            tok.paren_depth = min(3, parens)
+            parens += 1
+        elif c in (41, 93):
+            parens = max(0, parens - 1)
+            tok.paren_depth = min(3, parens)
+        else:
+            tok.paren_depth = min(3, parens)
+        tok.trans_prev = tok.trans_next = 0
+        tok.sym_prev = tok.sym_next = 0
+        if out:
+            prev = out[-1]
+            prev.gap_next = tok.gap_prev
+            if tok.gap_prev == 0:
+                trans = TRANSITIONS.get((prev.last_char, tok.first_char), 0)
+                tok.trans_prev = trans
+                prev.trans_next = trans
+            if prev.kind == 3 or tok.kind == 3:
+                sym_h = symbol_hash(prev.last_char, tok.first_char)
+                tok.sym_prev = sym_h
+                prev.sym_next = sym_h
+        out.append(tok)
+        spaces = False
+        newlines = 0
+    return out
+
+
+V2_FIELDS = ('gap_prev', 'gap_next', 'indent', 'line_first', 'brace_depth', 'paren_depth')
+
+
+def tokenize_version(text: str, version: int) -> list[Token]:
+    if version == 1:
+        return tokenize(text)
+    if version == 2:
+        return tokenize_v2(text)
+    raise ValueError(f'unknown feature version {version}')
+
+
+def tokens_to_arrays(tokens: list[Token], version: int = 1):
+    if version == 2:
+        base = tokens_to_arrays(tokens, 1)
+        for name in V2_FIELDS:
+            base[name] = np.fromiter((getattr(t, name) for t in tokens),
+                                     dtype=np.int64, count=len(tokens))
+        return base
     T = len(tokens)
     kinds = np.empty(T, dtype=np.int64)
     len_buckets = np.empty(T, dtype=np.int64)

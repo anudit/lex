@@ -4,13 +4,10 @@ problem or a data problem.
 
 Four signals, in the order they usually explain a failure:
   * tokens per file -- a budget met by a handful of huge files teaches one house
-    style. This is what made markdown score 15% on unseen repositories.
+    style.
   * top-repo share -- what fraction of a language's tokens come from its single
-    largest source. Many files from one project is still one distribution:
-    plaintext was 400k tokens of SPDX licence templates spread over hundreds of
-    files, so tokens-per-file looked healthy while the model learned that a bare
-    English word on its own line is a keyword. It scored ~100% on validation,
-    which drew from the same source, and 34% on real word lists.
+    largest source. Many files from one project is still one distribution, and
+    validation drawn from the same source will not reveal it.
   * label distribution -- a language whose tokens are almost all one class is
     easy; one that disagrees with the corpus-wide mix may be mislabelled.
   * mask rate -- how often Shiki leaves a token's first character uncovered, i.e.
@@ -23,8 +20,6 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from pathlib import Path
-
-import numpy as np
 
 import data_pipeline as dp
 import tokenizer
@@ -60,15 +55,12 @@ def main() -> None:
             stem = Path(path).name.split('__')
             repo = '__'.join(stem[:2]) if len(stem) > 2 else '?'
             char_cls = dp.decode_rle(rle, len(code))
-            toks = tokenizer.tokenize(code)
+            toks = tokenizer.tokenize_v2(code)
             lab = dp.align(toks, char_cls)
-            # Only count tokens that carry visible text; whitespace is masked by
-            # design and would swamp the real disagreement rate.
-            visible = np.array([t.kind not in (1, 2) for t in toks])
             s['files'] += 1
-            s['tokens'] += int(visible.sum())
-            s['repos'][repo] += int(visible.sum())
-            s['masked'] += int(((lab == MASK) & visible).sum())
+            s['tokens'] += len(toks)
+            s['repos'][repo] += len(toks)
+            s['masked'] += int((lab == MASK).sum())
             s['labels'].update(lab[lab >= 0].tolist())
 
     print(f'{"language":12s} {"files":>6s} {"tokens":>10s} {"tok/file":>9s} '

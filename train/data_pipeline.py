@@ -7,11 +7,13 @@ Shiki pass (build_labels.py) produces per-character classes, and the only work
 here is aligning them onto the lexer's own token grid and dropping anything
 ambiguous rather than guessing.
 
-Three properties the previous pipeline lacked, and the reasons they matter:
+Properties that matter for the result:
 
-  * Splits are by *file*, assigned from a hash of the path. Splitting randomly
-    over chunks leaks near-identical blocks between train and val and makes the
-    validation number meaningless.
+  * Splits are by *file*, assigned from a hash of the file content, so
+    near-identical chunks and byte-identical copies cannot straddle train and
+    validation.
+  * Files whose extension is a different dialect from their directory's grammar
+    (languages.grammar_matches_file) are skipped rather than mislabelled.
   * Near-duplicate chunks are capped. Real corpora contain generated files,
     vendored copies and licence headers by the thousand; left alone they dominate
     the gradient.
@@ -36,10 +38,25 @@ import tokenizer
 from labels import MASK, NUM_CLASSES, CLASS_NAMES
 from languages import TARGET_LANGUAGES, token_budgets, weights
 
+try:
+    from languages import grammar_matches_file
+except ImportError:  # lex-large's languages module has no dialect filter
+    def grammar_matches_file(lang: str, path: str) -> bool:
+        return True
+
 FEATURE_KEYS = (
     'kind', 'len_bucket', 'first_char', 'last_char', 'hash1', 'hash2',
     'flags', 'trans_prev', 'trans_next', 'sym_prev', 'sym_next',
 )
+# lex-large imports this module with its own `tokenizer`, so the v2 field
+# names are spelled out here rather than read from tokenizer.V2_FIELDS.
+FEATURE_KEYS_V2 = FEATURE_KEYS + (
+    'gap_prev', 'gap_next', 'indent', 'line_first', 'brace_depth', 'paren_depth',
+)
+
+
+def feature_keys(version: int) -> tuple[str, ...]:
+    return FEATURE_KEYS if version == 1 else FEATURE_KEYS_V2
 
 _RLE = re.compile(r'(\d):(\d+)')
 
@@ -77,12 +94,9 @@ def align(tokens, char_cls: np.ndarray) -> np.ndarray:
 
 
 def split_of(text: str, val_pct: int = 5, test_pct: int = 5) -> str:
-    """Deterministic per-content split. Hashing the file *content* -- not the
-    path -- guarantees a byte-identical file always lands in the same split no
-    matter how many repo paths it was fetched under. Hashing the path basename
-    let ~0.6% of files (vendored copies, generated boilerplate, license
-    headers fetched under different repo paths) leak byte-identical content
-    across train/val/test, silently inflating val/test accuracy."""
+    """Deterministic per-content split: a byte-identical file (vendored copy,
+    generated boilerplate, licence header) always lands in the same split no
+    matter how many repo paths it was fetched under."""
     h = int(hashlib.sha1(text.encode('utf-8', errors='ignore')).hexdigest()[:8], 16) % 100
     if h < test_pct:
         return 'test'
@@ -106,19 +120,22 @@ class LexerDataset(Dataset):
         self.langs = langs
         self.seq_len = seq_len
         self.teacher_logits: np.ndarray | None = None
+        self.keys = tuple(k for k in flat if k != 'label')
 
     @classmethod
-    def from_samples(cls, samples: list[dict], seq_len: int) -> 'LexerDataset':
+    def from_samples(cls, samples: list[dict], seq_len: int,
+                     keys: tuple[str, ...] = FEATURE_KEYS) -> 'LexerDataset':
         if not samples:
-            empty = {k: np.zeros(0, dtype=np.int64) for k in FEATURE_KEYS}
+            empty = {k: np.zeros(0, dtype=np.int64) for k in keys}
             empty['label'] = np.zeros(0, dtype=np.int64)
             return cls(empty, np.zeros(1, dtype=np.int64),
                        np.zeros(0, dtype=np.int64), seq_len)
         offsets = np.zeros(len(samples) + 1, dtype=np.int64)
         for i, s in enumerate(samples):
             offsets[i + 1] = offsets[i] + len(s['label'])
+        keys = tuple(k for k in samples[0] if k not in ('label', 'lang'))
         flat = {k: np.concatenate([s[k] for s in samples]).astype(np.int64)
-                for k in FEATURE_KEYS}
+                for k in keys}
         flat['label'] = np.concatenate([s['label'] for s in samples]).astype(np.int64)
         langs = np.array([s['lang'] for s in samples], dtype=np.int64)
         return cls(flat, offsets, langs, seq_len)
@@ -131,7 +148,7 @@ class LexerDataset(Dataset):
         n = b - a
         pad = self.seq_len - n
         item = {}
-        for k in FEATURE_KEYS:
+        for k in self.keys:
             v = torch.from_numpy(self.flat[k][a:b])
             item[k] = torch.cat([v, v.new_zeros(pad)]) if pad > 0 else v
         lab = torch.from_numpy(self.flat['label'][a:b])
@@ -196,13 +213,14 @@ def teacher_folds(ds: LexerDataset, n_folds: int = 2, min_groups: int = 4,
 
 def _chunk(arrays: dict[str, np.ndarray], labels: np.ndarray, lang_id: int,
            seq_len: int, min_len: int) -> list[dict]:
+    keys = tuple(arrays)
     T = len(labels)
     out = []
     for start in range(0, T, seq_len):
         end = min(start + seq_len, T)
         if end - start < min_len:
             continue
-        piece = {k: arrays[k][start:end] for k in FEATURE_KEYS}
+        piece = {k: arrays[k][start:end] for k in keys}
         piece['label'] = labels[start:end]
         piece['lang'] = lang_id
         if int((piece['label'] >= 0).sum()) < min_len // 2:
@@ -211,14 +229,56 @@ def _chunk(arrays: dict[str, np.ndarray], labels: np.ndarray, lang_id: int,
     return out
 
 
+def _prepare_file(job: tuple[str, str, int, int, int, int]):
+    """Tokenize, align and chunk one labelled file (runs in a worker process)."""
+    path, rle, lang_id, seq_len, min_len, version = job
+    try:
+        code = Path(path).read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError):
+        return None
+    char_cls = decode_rle(rle, len(code))
+    if version == 1:
+        # lex-large's tokenizer module only has the version-1 entry points.
+        toks = tokenizer.tokenize(code)
+    else:
+        toks = tokenizer.tokenize_version(code, version)
+    if len(toks) < min_len:
+        return None
+    labels = align(toks, char_cls)
+    if int((labels >= 0).sum()) < min_len // 2:
+        return None
+    arrays = (tokenizer.tokens_to_arrays(toks) if version == 1
+              else tokenizer.tokens_to_arrays(toks, version))
+    return split_of(code), _chunk(arrays, labels, lang_id, seq_len, min_len)
+
+
+def _label_jobs(label_files, lang_index, seq_len, min_len, version, stats):
+    for shard in label_files:
+        with shard.open() as fh:
+            for line in fh:
+                path, _, rle = line.rstrip('\n').partition('\t')
+                if not rle:
+                    continue
+                lang = Path(path).parent.name
+                lang_id = lang_index.get(lang)
+                if lang_id is None:
+                    continue
+                if not grammar_matches_file(lang, path):
+                    stats['files_skipped_grammar'] += 1
+                    continue
+                yield lang, (path, rle, lang_id, seq_len, min_len, version)
+
+
 def build(
     label_dir: str = './corpus/labels',
     seq_len: int = 512,
     min_len: int = 32,
     total_tokens: int | None = None,
     max_dup: int = 3,
-    cache: str | None = './corpus/dataset',
+    cache: str | None = './corpus/dataset_v2',
     verbose: bool = True,
+    feature_version: int = 2,
+    workers: int = 0,
 ) -> tuple[dict[str, LexerDataset], dict]:
     """Assemble train/val/test datasets from the Shiki-labelled corpus.
 
@@ -238,6 +298,13 @@ def build(
     lang_index = {l: i for i, l in enumerate(TARGET_LANGUAGES)}
     budgets = token_budgets(total_tokens)
 
+    if cached_meta is not None and cached_meta.get('feature_version', 1) != feature_version:
+        # Never rebuild over a cache of another feature layout: other runs and
+        # checkpoints depend on it. Pick a different --dataset directory.
+        raise ValueError(
+            f"{cache_path} holds feature version {cached_meta.get('feature_version', 1)}, "
+            f'not {feature_version}; use a separate cache directory')
+
     if cache_path and cached_meta is not None:
         label_mtime = max((f.stat().st_mtime for f in Path(label_dir).glob('labels.*.tsv')), default=0)
         cache_mtime = (cache_path / 'meta.json').stat().st_mtime
@@ -256,70 +323,72 @@ def build(
     dup_counts: Counter[bytes] = Counter()
     stats = {
         'files': 0, 'files_skipped_budget': 0, 'chunks_dropped_dup': 0,
+        'files_skipped_grammar': 0,
         'tokens_per_lang': Counter(), 'labels': Counter(),
     }
 
-    for shard in label_files:
-        with shard.open() as fh:
-            for line in fh:
-                path, _, rle = line.rstrip('\n').partition('\t')
-                if not rle:
-                    continue
-                lang = Path(path).parent.name
-                lang_id = lang_index.get(lang)
-                if lang_id is None:
-                    continue
-                if used_tokens[lang] >= budgets.get(lang, 0):
-                    stats['files_skipped_budget'] += 1
-                    continue
-                try:
-                    code = Path(path).read_text(encoding='utf-8')
-                except OSError:
-                    continue
-                char_cls = decode_rle(rle, len(code))
-                toks = tokenizer.tokenize(code)
-                if len(toks) < min_len:
-                    continue
-                labels = align(toks, char_cls)
-                if int((labels >= 0).sum()) < min_len // 2:
-                    continue
+    import multiprocessing as mp
+    n_workers = workers or max(1, (os.cpu_count() or 2) - 2)
+    jobs = _label_jobs(label_files, lang_index, seq_len, min_len, feature_version, stats)
+    pending_langs: list[str] = []
 
-                arrays = tokenizer.tokens_to_arrays(toks)
-                split = split_of(code)
-                chunks = _chunk(arrays, labels, lang_id, seq_len, min_len)
+    def job_stream():
+        # Budget check before dispatch, as the sequential build did; the check is
+        # slightly optimistic under parallelism (in-flight files are not yet
+        # counted), so the same check is repeated when a result is consumed.
+        for lang, job in jobs:
+            if used_tokens[lang] >= budgets.get(lang, 0):
+                stats['files_skipped_budget'] += 1
+                continue
+            pending_langs.append(lang)
+            yield job
 
-                kept = []
-                for ch in chunks:
-                    # Structural fingerprint: token kinds plus labels. Identifier
-                    # names differ across generated files that are otherwise the
-                    # same shape, so hashing the text would not catch them.
-                    key = hashlib.blake2b(
-                        ch['kind'].astype(np.uint8).tobytes()
-                        + ch['label'].astype(np.int8).tobytes(),
-                        digest_size=16).digest()
-                    dup_counts[key] += 1
-                    if dup_counts[key] > max_dup:
-                        stats['chunks_dropped_dup'] += 1
-                        continue
-                    kept.append(ch)
-
-                if not kept:
+    with mp.get_context('fork').Pool(n_workers) as pool:
+        # imap keeps file order, so the dedup and budget decisions below are
+        # deterministic regardless of worker count.
+        for i, result in enumerate(pool.imap(_prepare_file, job_stream(), chunksize=16)):
+            lang = pending_langs[i]
+            if result is None:
+                continue
+            if used_tokens[lang] >= budgets.get(lang, 0):
+                stats['files_skipped_budget'] += 1
+                continue
+            split, chunks = result
+            kept = []
+            for ch in chunks:
+                # Structural fingerprint: token kinds plus labels. Identifier
+                # names differ across generated files that are otherwise the
+                # same shape, so hashing the text would not catch them.
+                key = hashlib.blake2b(
+                    ch['kind'].astype(np.uint8).tobytes()
+                    + ch['label'].astype(np.int8).tobytes(),
+                    digest_size=16).digest()
+                dup_counts[key] += 1
+                if dup_counts[key] > max_dup:
+                    stats['chunks_dropped_dup'] += 1
                     continue
-                per_split[split].extend(kept)
-                n_tok = sum(len(c['label']) for c in kept)
-                used_tokens[lang] += n_tok
-                stats['tokens_per_lang'][lang] += n_tok
-                stats['files'] += 1
-                for c in kept:
-                    lab = c['label']
-                    stats['labels'].update(lab[lab >= 0].tolist())
+                kept.append(ch)
+
+            if not kept:
+                continue
+            per_split[split].extend(kept)
+            n_tok = sum(len(c['label']) for c in kept)
+            used_tokens[lang] += n_tok
+            stats['tokens_per_lang'][lang] += n_tok
+            stats['files'] += 1
+            for c in kept:
+                lab = c['label']
+                stats['labels'].update(lab[lab >= 0].tolist())
 
     _guarantee_split_coverage(per_split)
 
-    datasets = {k: LexerDataset.from_samples(v, seq_len)
+    keys = feature_keys(feature_version)
+    datasets = {k: LexerDataset.from_samples(v, seq_len, keys)
                 for k, v in per_split.items()}
     meta = _summarize(stats, used_tokens, seq_len, verbose)
     meta['total_tokens_requested'] = total_tokens
+    meta['feature_version'] = feature_version
+    meta['files_skipped_grammar'] = stats['files_skipped_grammar']
     if cache_path:
         _save_cache(cache_path, per_split, meta)
     return datasets, meta
@@ -400,7 +469,7 @@ def _load_cache(path: Path, seq_len: int) -> tuple[dict[str, LexerDataset], dict
             datasets[split] = LexerDataset.from_samples([], seq_len)
             continue
         z = np.load(f)
-        flat = {k: z[k] for k in (*FEATURE_KEYS, 'label')}
+        flat = {k: z[k] for k in (*feature_keys(meta.get('feature_version', 1)), 'label')}
         datasets[split] = LexerDataset(flat, z['offsets'], z['lang'], seq_len)
     return datasets, meta
 
@@ -410,11 +479,14 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--labels', default='./corpus/labels')
     ap.add_argument('--seq-len', type=int, default=512)
-    ap.add_argument('--total-tokens', type=int, default=24_000_000)
-    ap.add_argument('--cache', default='./corpus/dataset')
+    ap.add_argument('--total-tokens', type=int, default=42_000_000)
+    ap.add_argument('--cache', default='./corpus/dataset_v2')
     ap.add_argument('--no-cache', action='store_true')
+    ap.add_argument('--feature-version', type=int, choices=(1, 2), default=2)
+    ap.add_argument('--workers', type=int, default=0)
     args = ap.parse_args()
     ds, meta = build(args.labels, seq_len=args.seq_len, total_tokens=args.total_tokens,
-                     cache=None if args.no_cache else args.cache)
+                     cache=None if args.no_cache else args.cache,
+                     feature_version=args.feature_version, workers=args.workers)
     for k, v in ds.items():
         print(f'{k:6s} {len(v):7,d} windows')
