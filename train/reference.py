@@ -132,7 +132,12 @@ class Reference:
         prefix = np.cumsum(x * dg, axis=0) / np.cumsum(dg, axis=0).clip(min=1.0)
         counts = np.arange(1, T + 1, dtype=np.float32)[:, None]
         suffix = np.cumsum(x[::-1], axis=0)[::-1] / counts[::-1]
-        pooled = np.concatenate([prefix, suffix], axis=-1)
+        if self.meta.get('config', {}).get('ctx_views', 'full') == 'prefix_suffix':
+            pooled = np.concatenate([prefix, suffix], axis=-1)
+        else:
+            mean = np.broadcast_to(x.mean(0), x.shape)
+            maximum = np.broadcast_to(x.max(0), x.shape)
+            pooled = np.concatenate([mean, maximum, prefix, suffix], axis=-1)
         ctx = np.tanh(pooled @ self.W('global_ctx.summary').T + self.B('global_ctx.summary'))
         g = _sigmoid(x @ self.W('global_ctx.gate').T + self.B('global_ctx.gate'))
 

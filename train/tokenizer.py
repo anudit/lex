@@ -53,6 +53,8 @@ class Token:
         'trans_prev', 'trans_next', 'sym_prev', 'sym_next', 'text',
         # Feature-version-2 fields; unused (and unset) in version 1.
         'gap_prev', 'gap_next', 'indent', 'line_first', 'brace_depth', 'paren_depth',
+        # Extended structure fields used by lex-large v2.
+        'bracket_depth', 'line_pos', 'indent_bucket', 'quote_state',
     )
     def __init__(self, kind, start, end, first_char, last_char, len_b, h1, h2, flags, text):
         self.kind = kind

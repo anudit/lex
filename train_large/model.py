@@ -27,8 +27,8 @@ _spec.loader.exec_module(_base)
 # 1024/256 cuts word-hash collision pressure across four times as many grammars.
 # The six structural fields cost only 1.03 KiB at 3 bits but give the recurrence
 # exact local state that is otherwise expensive to rediscover from long context.
-FIELD_SIZES: dict[str, int] = dict(_base.FIELD_SIZES)
-FIELD_SIZES.update({
+FIELD_SIZES_V1: dict[str, int] = dict(_base.FIELD_SIZES)
+FIELD_SIZES_V1.update({
     'hash1': 1024,
     'hash2': 256,
     'paren_depth': 8,
@@ -38,8 +38,21 @@ FIELD_SIZES.update({
     'indent_bucket': 8,
     'quote_state': 4,
 })
+FIELD_SIZES_V2: dict[str, int] = {
+    **_base.FIELD_SIZES_V2,
+    'hash1': 1024,
+    'hash2': 256,
+    'paren_depth': 8,
+    'brace_depth': 8,
+    'bracket_depth': 8,
+    'line_pos': 8,
+    'quote_state': 4,
+}
+# Historical schema alias for callers that inspect this module directly.
+FIELD_SIZES = FIELD_SIZES_V1
 N_FLAG_BITS = _base.N_FLAG_BITS
-_base.FIELD_SIZES = FIELD_SIZES
+_base.FIELD_SIZES = FIELD_SIZES_V1
+_base.FIELD_SIZES_V2 = FIELD_SIZES_V2
 
 
 @dataclass
@@ -57,17 +70,18 @@ class LexerConfig(_base.LexerConfig):
     dilations: tuple[int, ...] = (1, 2, 4, 8)
     film_rank: int = 64
     erase_rank: int = 16
-    # lex-large keeps the base feature layout, four-view context and fp16
-    # scalars; the base config defaults to lex-lite's v2.
+    # Historical fallback for checkpoints created before the large-v2 upgrade.
     feature_version: int = 1
     ctx_views: str = 'full'
     scalar_bits: int = 16
 
 
 def student_config() -> LexerConfig:
-    """Selected MPS smoke candidate: exactly 110,352 packed bytes."""
+    """Large v2 student using the measured row-scale improvement."""
     return LexerConfig(input_bits=3, head_bits=2, output_bits=3,
-                       erase_rank=32, kernel_size=7, binary_ste=True)
+                       erase_rank=32, kernel_size=7, binary_ste=True,
+                       embedding_scale='row', feature_version=2,
+                       ctx_views='prefix_suffix', scalar_bits=8)
 
 
 class NeuralLexer(_base.NeuralLexer):

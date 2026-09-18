@@ -109,7 +109,7 @@ def evaluate(model, ds, device, batch_size):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--dataset', type=Path, default=Path(__file__).parent / 'corpus/dataset')
+    ap.add_argument('--dataset', type=Path, default=Path(__file__).parent / 'corpus/dataset_v2')
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--candidates', nargs='+', choices=[*CANDIDATES, *VARIANTS], default=list(CANDIDATES))
     ap.add_argument('--steps', type=int, default=160)

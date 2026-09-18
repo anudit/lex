@@ -35,6 +35,7 @@ import './style.css';
 import { WEIGHTS, TOP25 } from './corpus.js';
 import { WEIGHTS_LARGE } from './corpus_large.js';
 import RESULTS from './results.json';
+import SIZES from './sizes.json';
 import { boot } from './benchmark.js';
 import { CLASS_NAMES } from './adapters.js';
 
@@ -106,6 +107,7 @@ app.innerHTML = `
     </button>
   </div>
   <div id="results"></div>
+  <div id="sizes"></div>
   <div class="controls">
     <button id="run-latency" class="primary" type="button">Run latency</button>
     <span class="hint">measured on your machine &middot; needs WebGPU</span>
@@ -322,11 +324,78 @@ async function runLatency() {
   setStatus(`latency done \u2014 ${rows.length} engines`);
 }
 
+// --------------------------------------------------------------------- sizes
+
+function renderSizeChart() {
+  const container = document.getElementById('sizes');
+  if (!container) return;
+  const maxBytes = 1600000; // 1.53MB scale (400KB per 25% tick)
+  const rows = SIZES.rows;
+
+  container.innerHTML = `
+    <section class="size-chart">
+      <div class="section-head">
+        <h2>${SIZES.title}</h2>
+        <span class="meta">${SIZES.subtitle}</span>
+      </div>
+      <div class="size-legend-bar">
+        <span class="legend-item"><span class="legend-swatch seg-weights"></span> weights</span>
+        <span class="legend-item"><span class="legend-swatch seg-code"></span> code</span>
+        <span class="legend-item"><span class="legend-swatch seg-other"></span> package</span>
+      </div>
+      <div class="axis" aria-hidden="true">
+        <span></span>
+        <div class="axis-ticks">
+          <span>0KB</span>
+          <span style="left:25%">390.6KB</span>
+          <span style="left:50%">781.3KB</span>
+          <span style="left:75%">1.14MB</span>
+          <span style="left:100%">1.53MB</span>
+        </div>
+        <span></span>
+      </div>
+      <div class="bars">
+        ${rows.map((r) => {
+          const cls = [
+            'bar-row',
+            r.highlight ? 'highlight' : '',
+            r.ours ? 'ours' : '',
+          ].filter(Boolean).join(' ');
+
+          let trackContent = '';
+          let valueTitle = `${r.name}: ${r.display}`;
+
+          if (r.stacked) {
+            const wPct = ((r.stacked.weights.bytes / maxBytes) * 100).toFixed(2);
+            const cPct = ((r.stacked.code.bytes / maxBytes) * 100).toFixed(2);
+            valueTitle = `${r.name}: ${r.display} (weights: ${r.stacked.weights.display}, code: ${r.stacked.code.display})`;
+            trackContent = `
+              <span class="bar-fill bar-seg-weights" style="width:${wPct}%" title="Weights: ${r.stacked.weights.display}"></span>
+              <span class="bar-fill bar-seg-code" style="width:${cPct}%" title="Code: ${r.stacked.code.display}"></span>
+            `;
+          } else {
+            const pctWidth = Math.min(100, (r.bytes / maxBytes) * 100).toFixed(2);
+            trackContent = `<span class="bar-fill" style="width:${pctWidth}%"></span>`;
+          }
+
+          return `
+            <div class="${cls}" title="${valueTitle}">
+              <span class="bar-label">${r.name}</span>
+              <span class="bar-track${r.stacked ? ' stacked' : ''}">${trackContent}</span>
+              <span class="bar-value">${r.display}</span>
+            </div>`;
+        }).join('')}
+      </div>
+      <p class="footnote">${SIZES.footnote}</p>
+    </section>`;
+}
+
 // ---------------------------------------------------------------- page setup
 
 for (const c of RESULTS.corpora) {
   renderCorrectness(c.rows, c.label, c.nFiles, new Set(c.present), c.group ?? 'lite');
 }
+renderSizeChart();
 
 // ------------------------------------------------------------------- tabs
 

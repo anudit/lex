@@ -35,7 +35,7 @@ tags:
 
 # lex-large
 
-Prepared numeric training cache for the 99.97 KiB, {len(TARGET_LANGUAGES)}-grammar neural lexer.
+Prepared numeric training cache for the 101,107-byte, {len(TARGET_LANGUAGES)}-grammar neural lexer.
 It contains token features and nine-class syntax labels, not the original source
 text. File-level hashing fixes the train/validation/test split before upload.
 
@@ -45,6 +45,8 @@ text. File-level hashing fixes the train/validation/test split before upload.
 - `meta.json`: counts, label distribution, and per-language coverage
 - `language_manifest.json`: pinned Highlight.js grammar mapping
 - `sources.json`: GitHub repository provenance used by corpus preparation
+- `gpu_lexer_import.json`: hashes and counts for the imported gpu-lexer
+  train/mining shards; the verification split is excluded
 - `checksums.json`: byte sizes and SHA-256 checksums
 
 Total labelled tokens: {meta.get('total_tokens', 0):,}
@@ -57,7 +59,7 @@ Sequence length: {meta.get('seq_len', 512)}
 
 ```bash
 cd /path/to/lexer/train_large
-hf download {repo_id} --repo-type dataset --local-dir ./corpus/dataset
+hf download {repo_id} --repo-type dataset --local-dir ./corpus/dataset_v2
 .venv/bin/python test_setup.py
 ```
 
@@ -74,7 +76,7 @@ This revision contains {len(files)} payload files. Verify them against
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--folder', default='./corpus/dataset')
+    parser.add_argument('--folder', default='./corpus/dataset_v2')
     parser.add_argument('--repo-id', default='lex-large')
     parser.add_argument('--private', action='store_true')
     parser.add_argument('--workers', type=int, default=4)
@@ -91,6 +93,10 @@ def main() -> None:
         raise SystemExit(f'dataset cache is incomplete: {", ".join(missing)}')
 
     meta = json.loads(meta_path.read_text())
+    if meta.get('feature_version') != 2:
+        raise SystemExit(
+            f'only a feature-version-2 cache may be published; found '
+            f'{meta.get("feature_version", 1)}')
     if meta.get('languages_covered') != len(TARGET_LANGUAGES) and not args.allow_underfilled:
         raise SystemExit(
             f'expected {len(TARGET_LANGUAGES)} covered languages, '
@@ -102,6 +108,7 @@ def main() -> None:
     for source, name in (
         (HERE / 'language_manifest.json', 'language_manifest.json'),
         (HERE / 'repos.json', 'sources.json'),
+        (HERE / 'corpus' / 'labels' / 'gpu_lexer_import.json', 'gpu_lexer_import.json'),
     ):
         if source.exists():
             shutil.copyfile(source, folder / name)
@@ -115,7 +122,7 @@ def main() -> None:
 
     payload_names = (
         'train.npz', 'val.npz', 'test.npz', 'meta.json',
-        'language_manifest.json', 'sources.json',
+        'language_manifest.json', 'sources.json', 'gpu_lexer_import.json',
     )
     files = [
         {'path': name, 'bytes': (folder / name).stat().st_size, 'sha256': sha256(folder / name)}

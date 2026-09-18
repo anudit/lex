@@ -23,7 +23,7 @@ if str(BASE_DIR) not in sys.path:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint', default='./checkpoints_student/best_model.pt')
-    parser.add_argument('--dataset', default='./corpus/dataset')
+    parser.add_argument('--dataset', default='./corpus/dataset_v2')
     parser.add_argument('--split', choices=('val', 'test'), default='test')
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--workers', type=int, default=4)

@@ -34,6 +34,14 @@ const isSpace = (c) => c === 9 || c === 11 || c === 12 || c === 32;
 const isWord = (c) =>
   c > 127 || c === 95 || (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
 const charBucket = (c) => (c > 127 ? 95 : c & 127);
+const LINE_FIRST_SYMBOLS = '!"#$%&\'()*+,-./:;<=>?@[\\]^`{|}~';
+
+function indentBucket(width) {
+  if (width <= 2) return width;
+  if (width <= 4) return 3;
+  if (width <= 16) return 4 + Math.floor((width - 5) / 4);
+  return 7;
+}
 
 function lenBucket(n) {
   if (n <= 1) return 0;
@@ -50,7 +58,7 @@ function symbolHash(a, b) {
  * @returns {{count:number, starts:Int32Array, ends:Int32Array, kinds:Uint8Array, packed:Uint32Array}}
  *   `packed` holds three u32 per token in exactly the layout the shader unpacks.
  */
-export function tokenize(text) {
+export function tokenize(text, featureVersion = 1) {
   const n = text.length;
   // Upper bound: every character its own token.
   const starts = new Int32Array(n);
@@ -139,43 +147,31 @@ export function tokenize(text) {
     else if (kind !== 1) lineStart = false;
   }
 
-  for (let i = 1; i < count; i++) {
-    const t = TRANSITIONS.get((lastC[i - 1] << 8) | firstC[i]) || 0;
-    transPrev[i] = t;
-    transNext[i - 1] = t;
-    if (kinds[i - 1] === 3 || kinds[i] === 3) {
-      const s = symbolHash(lastC[i - 1], firstC[i]);
-      symPrev[i] = s;
-      symNext[i - 1] = s;
+  if (featureVersion === 1) {
+    for (let i = 1; i < count; i++) {
+      const transition = TRANSITIONS.get((lastC[i - 1] << 8) | firstC[i]) || 0;
+      transPrev[i] = transition;
+      transNext[i - 1] = transition;
+      if (kinds[i - 1] === 3 || kinds[i] === 3) {
+        const pair = symbolHash(lastC[i - 1], firstC[i]);
+        symPrev[i] = pair;
+        symNext[i - 1] = pair;
+      }
     }
-  }
-
-  // Zero-parameter structural hints: bracket/paren/brace nesting depth,
-  // position in the line, indent width, and quote-string state. A second pass
-  // over the already-split tokens, mirroring train_large/tokenizer.py's
-  // tokens_to_arrays exactly (same clamping, same reset-on-newline, same
-  // escape/quote toggling) since the model was trained on that exact sequence.
-  const parenD = new Uint8Array(count);
-  const braceD = new Uint8Array(count);
-  const bracketD = new Uint8Array(count);
-  const linePos = new Uint8Array(count);
-  const indentB = new Uint8Array(count);
-  const quoteS = new Uint8Array(count);
-  {
+    const parenD = new Uint8Array(count);
+    const braceD = new Uint8Array(count);
+    const bracketD = new Uint8Array(count);
+    const linePos = new Uint8Array(count);
+    const indentB = new Uint8Array(count);
+    const quoteS = new Uint8Array(count);
     let paren = 0; let brace = 0; let bracket = 0; let line = 0; let indent = 0;
     let quote = 0; let escaped = false; let atLineStart = true;
     for (let i = 0; i < count; i++) {
-      parenD[i] = Math.min(paren, 7);
-      braceD[i] = Math.min(brace, 7);
-      bracketD[i] = Math.min(bracket, 7);
-      linePos[i] = Math.min(line, 7);
-      indentB[i] = Math.min(32 - Math.clz32(indent), 7);
-      quoteS[i] = quote;
-
+      parenD[i] = Math.min(paren, 7); braceD[i] = Math.min(brace, 7);
+      bracketD[i] = Math.min(bracket, 7); linePos[i] = Math.min(line, 7);
+      indentB[i] = Math.min(32 - Math.clz32(indent), 7); quoteS[i] = quote;
       if (kinds[i] === 2) {
-        line = 0; indent = 0;
-        atLineStart = true;
-        escaped = false;
+        line = 0; indent = 0; atLineStart = true; escaped = false;
         continue;
       }
       if (kinds[i] === 1) {
@@ -184,30 +180,123 @@ export function tokenize(text) {
         }
         continue;
       }
-
-      const len = ends[i] - starts[i];
-      const ch0 = len === 1 ? text.charCodeAt(starts[i]) : -1;
-      if (kinds[i] === 3 && len === 1 && (ch0 === 39 || ch0 === 34 || ch0 === 96) && !escaped) {
+      const length = ends[i] - starts[i];
+      const ch0 = kinds[i] === 3 && length === 1 ? text.charCodeAt(starts[i]) : -1;
+      if ((ch0 === 39 || ch0 === 34 || ch0 === 96) && !escaped) {
         const state = ch0 === 39 ? 1 : ch0 === 34 ? 2 : 3;
         quote = quote === state ? 0 : (quote === 0 ? state : quote);
-      } else if (quote === 0 && kinds[i] === 3 && len === 1) {
-        if (ch0 === 40) paren += 1;         // (
-        else if (ch0 === 41) paren = Math.max(0, paren - 1); // )
-        else if (ch0 === 123) brace += 1;   // {
-        else if (ch0 === 125) brace = Math.max(0, brace - 1); // }
-        else if (ch0 === 91) bracket += 1;  // [
-        else if (ch0 === 93) bracket = Math.max(0, bracket - 1); // ]
+      } else if (quote === 0) {
+        if (ch0 === 40) paren++; else if (ch0 === 41) paren = Math.max(0, paren - 1);
+        else if (ch0 === 123) brace++; else if (ch0 === 125) brace = Math.max(0, brace - 1);
+        else if (ch0 === 91) bracket++; else if (ch0 === 93) bracket = Math.max(0, bracket - 1);
       }
-      escaped = kinds[i] === 3 && len === 1 && ch0 === 92 && !escaped; // \
-      atLineStart = false;
-      line += 1;
+      escaped = ch0 === 92 && !escaped;
+      atLineStart = false; line++;
     }
+    const packed = new Uint32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      packed[i * 3] = (kinds[i] & 3) | ((lenB[i] & 7) << 2)
+        | ((firstC[i] & 127) << 5) | ((lastC[i] & 127) << 12)
+        | ((flags[i] & 255) << 19) | ((symNext[i] & 31) << 27);
+      packed[i * 3 + 1] = (h1[i] & 1023) | ((h2[i] & 255) << 10)
+        | ((transPrev[i] & 15) << 18) | ((transNext[i] & 15) << 22)
+        | ((symPrev[i] & 31) << 26);
+      packed[i * 3 + 2] = (parenD[i] & 7) | ((braceD[i] & 7) << 3)
+        | ((bracketD[i] & 7) << 6) | ((linePos[i] & 7) << 9)
+        | ((indentB[i] & 7) << 12) | ((quoteS[i] & 3) << 15);
+    }
+    return { count, starts: starts.subarray(0, count), ends: ends.subarray(0, count),
+      kinds: kinds.subarray(0, count), packed };
   }
+  if (featureVersion !== 2) throw new Error(`unknown lex-large feature version: ${featureVersion}`);
+
+  // Compact away whitespace while transferring its useful state to adjacent
+  // syntax tokens. The arrays are compacted in place because their initial
+  // allocation is already the scanner's character-count upper bound.
+  const gapPrev = new Uint8Array(count);
+  const gapNext = new Uint8Array(count);
+  const indentB = new Uint8Array(count);
+  const lineFirst = new Uint8Array(count);
+  const parenD = new Uint8Array(count);
+  const braceD = new Uint8Array(count);
+  const bracketD = new Uint8Array(count);
+  const linePos = new Uint8Array(count);
+  const quoteS = new Uint8Array(count);
+  let outCount = 0;
+  let spaces = false; let newlines = 1; let indent = 0; let indentTab = false;
+  let firstOnLine = -1; let paren = 0; let brace = 0; let bracket = 0; let line = 0;
+  let quote = 0; let escaped = false;
+  for (let i = 0; i < count; i++) {
+    if (kinds[i] === 2) {
+      newlines++;
+      indent = 0; indentTab = false; firstOnLine = -1; line = 0; escaped = false;
+      continue;
+    }
+    if (kinds[i] === 1) {
+      spaces = true;
+      if (firstOnLine < 0) {
+        for (let p = starts[i]; p < ends[i]; p++) {
+          const tab = text.charCodeAt(p) === 9;
+          indent += tab ? 4 : 1;
+          indentTab ||= tab;
+        }
+      }
+      continue;
+    }
+
+    const o = outCount++;
+    if (o !== i) {
+      starts[o] = starts[i]; ends[o] = ends[i]; kinds[o] = kinds[i];
+      firstC[o] = firstC[i]; lastC[o] = lastC[i]; lenB[o] = lenB[i];
+      h1[o] = h1[i]; h2[o] = h2[i]; flags[o] = flags[i];
+    }
+    if (firstOnLine < 0) {
+      firstOnLine = kinds[o] === 0 ? 0 : LINE_FIRST_SYMBOLS.indexOf(String.fromCharCode(firstC[o])) + 1;
+    }
+    gapPrev[o] = newlines >= 2 ? 3 : newlines === 1 ? 2 : spaces ? 1 : 0;
+    gapNext[o] = 2;
+    indentB[o] = indentBucket(indent);
+    lineFirst[o] = Math.max(0, firstOnLine);
+    parenD[o] = Math.min(paren, 7);
+    braceD[o] = Math.min(brace, 7);
+    bracketD[o] = Math.min(bracket, 7);
+    linePos[o] = Math.min(line, 7);
+    quoteS[o] = quote;
+    if (indentTab) flags[o] |= 32;
+
+    const length = ends[o] - starts[o];
+    const ch0 = kinds[o] === 3 && length === 1 ? text.charCodeAt(starts[o]) : -1;
+    if ((ch0 === 39 || ch0 === 34 || ch0 === 96) && !escaped) {
+      const state = ch0 === 39 ? 1 : ch0 === 34 ? 2 : 3;
+      quote = quote === state ? 0 : (quote === 0 ? state : quote);
+    } else if (quote === 0) {
+      if (ch0 === 40) paren++; else if (ch0 === 41) paren = Math.max(0, paren - 1);
+      else if (ch0 === 123) brace++; else if (ch0 === 125) brace = Math.max(0, brace - 1);
+      else if (ch0 === 91) bracket++; else if (ch0 === 93) bracket = Math.max(0, bracket - 1);
+    }
+    escaped = ch0 === 92 && !escaped;
+
+    if (o > 0) {
+      gapNext[o - 1] = gapPrev[o];
+      if (gapPrev[o] === 0) {
+        const transition = TRANSITIONS.get((lastC[o - 1] << 8) | firstC[o]) || 0;
+        transPrev[o] = transition;
+        transNext[o - 1] = transition;
+      }
+      if (kinds[o - 1] === 3 || kinds[o] === 3) {
+        const pair = symbolHash(lastC[o - 1], firstC[o]);
+        symPrev[o] = pair;
+        symNext[o - 1] = pair;
+      }
+    }
+    spaces = false; newlines = 0; line++;
+  }
+  count = outCount;
 
   // Pack into the three-word layout the shader reads. Keeping the packing here
   // means the GPU never does field arithmetic it can avoid. Word 0 retains
-  // lex's layout; word 1 widens hash2, and word 2 carries the six
-  // structural fields (17 of its 32 bits used).
+  // lex's layout; word 1 widens both hashes, and word 2 carries v2 gap,
+  // indentation, line and structure fields.
   const packed = new Uint32Array(count * 3);
   for (let i = 0; i < count; i++) {
     packed[i * 3] =
@@ -224,12 +313,15 @@ export function tokenize(text) {
       ((transNext[i] & 15) << 22) |
       ((symPrev[i] & 31) << 26);
     packed[i * 3 + 2] =
-      (parenD[i] & 7) |
-      ((braceD[i] & 7) << 3) |
-      ((bracketD[i] & 7) << 6) |
-      ((linePos[i] & 7) << 9) |
-      ((indentB[i] & 7) << 12) |
-      ((quoteS[i] & 3) << 15);
+      (gapPrev[i] & 3) |
+      ((gapNext[i] & 3) << 2) |
+      ((indentB[i] & 7) << 4) |
+      ((lineFirst[i] & 31) << 7) |
+      ((braceD[i] & 7) << 12) |
+      ((parenD[i] & 7) << 15) |
+      ((bracketD[i] & 7) << 18) |
+      ((linePos[i] & 7) << 21) |
+      ((quoteS[i] & 3) << 24);
   }
 
   return {

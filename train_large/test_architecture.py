@@ -13,7 +13,7 @@ import unittest
 import numpy as np
 import torch
 
-from model import LexerConfig, NeuralLexer
+from model import LexerConfig, NeuralLexer, student_config
 from quant import QuantLinear, quantize, row_scale
 import tokenizer
 import export
@@ -32,7 +32,7 @@ CASES = [
 
 class ArchitectureTests(unittest.TestCase):
     def test_training_defaults_and_overrides(self):
-        self.assertEqual(NeuralLexer().size_report()['packed_bytes'], 110352)
+        self.assertEqual(NeuralLexer().size_report()['packed_bytes'], 101107)
         self.assertEqual(NeuralLexer(LexerConfig()).size_report()['packed_bytes'], 102368)
         # Capture wrapper arguments before the real trainer can load a corpus.
         script = r'''
@@ -77,6 +77,12 @@ runpy.run_path(target, run_name='__main__')
                 self.assertEqual(get('--weight-budget'), '111000')
                 self.assertEqual(get('--epochs'), '64')
                 self.assertEqual(get('--distill-weight'), '0.5')
+                self.assertEqual(get('--dataset'), './corpus/dataset_v2')
+                self.assertEqual(get('--feature-version'), '2')
+                self.assertEqual(get('--ctx-views'), 'prefix_suffix')
+                self.assertEqual(get('--scalar-bits'), '8')
+                self.assertEqual(get('--embedding-scale'), 'row')
+                self.assertEqual(get('--class-weight-exponent'), '0.25')
                 self.assertEqual('--binary-ste' in args, not bool(overrides))
 
         ddp_env = dict(os.environ, WORLD_SIZE='4')
@@ -110,7 +116,37 @@ runpy.run_path(target, run_name='__main__')
 import { tokenize } from './lex-large/src/tokenizer.js';
 let input=''; for await (const chunk of process.stdin) input+=chunk;
 const result=JSON.parse(input).map(code=>{
-  const t=tokenize(code), fields=[];
+  const t=tokenize(code,2), fields=[];
+  for(let i=0;i<t.count;i++) {
+    const [a,b,c]=t.packed.slice(i*3,i*3+3);
+    fields.push({kind:a&3,len_bucket:(a>>>2)&7,first_char:(a>>>5)&127,
+      last_char:(a>>>12)&127,flags:(a>>>19)&255,sym_next:a>>>27,
+      hash1:b&1023,hash2:(b>>>10)&255,trans_prev:(b>>>18)&15,
+      trans_next:(b>>>22)&15,sym_prev:(b>>>26)&31,
+      paren_depth:c&7,brace_depth:(c>>>3)&7,bracket_depth:(c>>>6)&7,
+      gap_prev:c&3,gap_next:(c>>>2)&3,indent:(c>>>4)&7,
+      line_first:(c>>>7)&31,brace_depth:(c>>>12)&7,paren_depth:(c>>>15)&7,
+      bracket_depth:(c>>>18)&7,line_pos:(c>>>21)&7,quote_state:(c>>>24)&3});
+  }
+  return {text:Array.from(t.starts,(s,i)=>code.slice(s,t.ends[i])),fields};
+}); console.log(JSON.stringify(result));
+'''
+        result = subprocess.run(['node', '--input-type=module', '-e', script],
+                                input=json.dumps(CASES), text=True, capture_output=True,
+                                cwd=ROOT, check=True)
+        for code, js in zip(CASES, json.loads(result.stdout)):
+            tokens = tokenizer.tokenize_v2(code)
+            feats = tokenizer.tokens_to_arrays(tokens, 2)
+            self.assertEqual(js['text'], [t.text for t in tokens])
+            for i, fields in enumerate(js['fields']):
+                self.assertEqual(fields, {k: int(v[i]) for k, v in feats.items()})
+
+    def test_v1_runtime_tokenizer_compatibility(self):
+        script = r'''
+import { tokenize } from './lex-large/src/tokenizer.js';
+let input=''; for await (const chunk of process.stdin) input+=chunk;
+const result=JSON.parse(input).map(code=>{
+  const t=tokenize(code,1), fields=[];
   for(let i=0;i<t.count;i++) {
     const [a,b,c]=t.packed.slice(i*3,i*3+3);
     fields.push({kind:a&3,len_bucket:(a>>>2)&7,first_char:(a>>>5)&127,
@@ -128,10 +164,10 @@ const result=JSON.parse(input).map(code=>{
                                 cwd=ROOT, check=True)
         for code, js in zip(CASES, json.loads(result.stdout)):
             tokens = tokenizer.tokenize(code)
-            feats = tokenizer.tokens_to_arrays(tokens)
-            self.assertEqual(js['text'], [t.text for t in tokens])
+            feats = tokenizer.tokens_to_arrays(tokens, 1)
+            self.assertEqual(js['text'], [token.text for token in tokens])
             for i, fields in enumerate(js['fields']):
-                self.assertEqual(fields, {k: int(v[i]) for k, v in feats.items()})
+                self.assertEqual(fields, {key: int(value[i]) for key, value in feats.items()})
 
     def test_candidate_export_and_numpy_forward(self):
         expected = dict(legacy=102368, baseline=102368, head2=107192,
@@ -152,9 +188,10 @@ const result=JSON.parse(input).map(code=>{
                 self.assertEqual(report['meta']['config']['embedding_scale'], cfg.embedding_scale)
                 restored = NeuralLexer(LexerConfig(**asdict(cfg)))
                 restored.load_state_dict(model.state_dict())
-                shader = generate(report['meta'])
-                self.assertNotIn('__FILM_UP_DOT__', shader)
-                self.assertIn('array<f32, KSIZE>', shader)
+                if cfg.output_bits == 3:
+                    shader = generate(report['meta'])
+                    self.assertNotIn('__FILM_UP_DOT__', shader)
+                    self.assertIn('array<f32, KSIZE>', shader)
                 reference = Reference(directory)
                 for code in CASES[:5]:
                     arrays = tokenizer.tokens_to_arrays(tokenizer.tokenize(code))
@@ -162,6 +199,26 @@ const result=JSON.parse(input).map(code=>{
                     with torch.no_grad():
                         actual = model(features)[0].numpy()
                     np.testing.assert_allclose(actual, reference.forward(arrays), atol=0.025, rtol=0.01)
+
+    def test_v2_student_export_and_numpy_forward(self):
+        torch.manual_seed(20260918)
+        model = NeuralLexer(student_config()).eval()
+        with tempfile.TemporaryDirectory() as directory:
+            report = export.export_model(model, directory)
+            self.assertEqual(report['bytes'], 101107)
+            self.assertEqual(report['meta']['feature_version'], 2)
+            self.assertEqual(report['meta']['scalar_bits'], 8)
+            shader = generate(report['meta'])
+            self.assertIn('quote_state (f == 18)', shader)
+            self.assertNotIn('j * 4u * DIM', shader)
+            reference = Reference(directory)
+            for code in CASES:
+                tokens = tokenizer.tokenize_v2(code)
+                arrays = tokenizer.tokens_to_arrays(tokens, 2)
+                features = {k: torch.from_numpy(v).unsqueeze(0) for k, v in arrays.items()}
+                with torch.no_grad():
+                    actual = model(features)[0].numpy()
+                np.testing.assert_allclose(actual, reference.forward(arrays), atol=0.04, rtol=0.02)
 
     def test_npz_mmap_loader(self):
         with tempfile.TemporaryDirectory() as directory:

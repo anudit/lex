@@ -59,7 +59,7 @@ def load_batch(dataset: Path, batch_size: int, device: torch.device):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', default='./corpus/dataset')
+    parser.add_argument('--dataset', default='./corpus/dataset_v2')
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--steps', type=int, default=20)
     parser.add_argument('--shapes', nargs='+', default=[REFERENCE, '256x4', '256x6'])

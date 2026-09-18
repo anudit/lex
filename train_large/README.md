@@ -32,11 +32,13 @@ training, evaluation, and export commands.
 | recurrent reset | directional rank-32 input-conditioned erase |
 | classifier | 192-wide GELU head, 9 output classes |
 | lexical hashes | 1024 primary, 256 secondary |
-| structural inputs | paren/brace/bracket depth, line position, indent, quote state |
-| quantization | 3-bit embedding/input projection, 2-bit hidden classifier, 3-bit output classifier, binary backbone, 4-bit depthwise kernels |
+| token sequence | words and symbols only; whitespace becomes gap/indent/line fields |
+| structural inputs | gap, line-first symbol, paren/brace/bracket depth, line position, indent, quote state |
+| document context | declaration-gated prefix and suffix means; mean/max stay in the signature |
+| quantization | 3-bit row-scaled embedding/input projection, 2-bit hidden classifier, 3-bit output classifier, binary backbone, 4-bit depthwise kernels, 8-bit scalar state |
 | QAT gradients | clipped binary straight-through estimator; derived binary scales detached in backward |
-| exact packed weights | **110,352 bytes / 107.77 KiB** |
-| parameters | **453,866** |
+| exact packed weights | **101,107 bytes / 98.74 KiB** |
+| parameters | **437,994** |
 
 All matrix widths and ranks are multiples of 32, so packed rows do not waste a
 partial word. The extra budget is concentrated in shared representations rather
@@ -50,7 +52,10 @@ token accuracy, versus 66.36% for corrected gradients with the old architecture
 and 61.45% for the old gradient behavior. These are single-seed, 1,600-step
 supervised runs without distillation, not final model accuracy estimates.
 
-`NeuralLexer()` and `train.py` use the new student defaults. `LexerConfig()`
+`NeuralLexer()` and `train.py` use the large-v2 student defaults. The v2 layout
+ports the compact model's successful whitespace-free sequence, two-view global
+context, and scalar QAT while retaining the wider large-model hashes and extra
+structure. `LexerConfig()`
 retains historical fallback fields so older checkpoints that omit precision
 settings still load correctly; use `student_config()` for the new configuration.
 Resuming a checkpoint uses its stored architecture. Changing defaults does not
@@ -99,7 +104,7 @@ GITHUB_TOKEN=... .venv/bin/python discover_repos.py
 .venv/bin/python bootstrap_fixtures.py
 .venv/bin/python fetch_corpus.py
 .venv/bin/python build_labels.py --shards 8
-.venv/bin/python build_dataset.py
+.venv/bin/python build_dataset.py  # writes corpus/dataset_v2
 .venv/bin/python test_setup.py
 ```
 
@@ -129,7 +134,7 @@ disabled. Its capacity has not been increased based on student smoke results.
 After retraining the teacher, regenerate its logits cache before training the
 student; an existing cache is not automatically refreshed when defaults change.
 
-Cache the teacher outputs once, then train the 110,352-byte student. This avoids a
+Cache the teacher outputs once, then train the 101,107-byte student. This avoids a
 second teacher forward pass during every one of the 48 student epochs:
 
 ```bash
@@ -148,8 +153,8 @@ Audit the frozen test split, including the two teacher subsets:
   --checkpoint ./checkpoints_student/best_model.pt
 ```
 
-The student defaults to 48 epochs: six FP warmup epochs, 34 broadly tempered QAT
-epochs, and eight natural-calibration epochs. CUDA defaults are BF16 autocast,
+The student defaults to 64 epochs: six FP warmup epochs, followed by QAT with
+natural-popularity calibration over the final one-sixth. CUDA defaults are BF16 autocast,
 fused AdamW, pinned/prefetched input, and a global batch size of 64 (16 per GPU
 on four GPUs). Compilation defaults to `none` because the tested Inductor builds
 crashed at epoch boundaries. The language auxiliary loss is reduced to 0.15
@@ -158,6 +163,8 @@ because a 185-way identity target otherwise overwhelms the token objective.
 ## Acceptance gates
 
 - Packed `weights.bin` is at most 111,000 bytes.
+- The exported default is exactly 101,107 bytes and uses feature version 2 with
+  8-bit scalar state.
 - All 185 grammars have train, validation, and test data with at least 300k total
   tokens before splitting.
 - Report popularity-weighted, macro-language, micro, and boundary metrics; do

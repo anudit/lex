@@ -20,26 +20,32 @@ _base = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = _base
 _spec.loader.exec_module(_base)
 
-FEATURE_KEYS = _base.FEATURE_KEYS + (
+FEATURE_KEYS_V1 = _base.FEATURE_KEYS + (
     'paren_depth', 'brace_depth', 'bracket_depth', 'line_pos',
     'indent_bucket', 'quote_state',
 )
-_base.FEATURE_KEYS = FEATURE_KEYS
+FEATURE_KEYS_V2 = _base.FEATURE_KEYS_V2 + (
+    'bracket_depth', 'line_pos', 'quote_state',
+)
+FEATURE_KEYS = FEATURE_KEYS_V2
+_base.FEATURE_KEYS = FEATURE_KEYS_V1
+_base.FEATURE_KEYS_V2 = FEATURE_KEYS_V2
 
 LexerDataset = _base.LexerDataset
 decode_rle = _base.decode_rle
 align = _base.align
 split_of = _base.split_of
+feature_keys = _base.feature_keys
 file_groups = _base.file_groups
 teacher_folds = _base.teacher_folds
 
 
 def build(*args, total_tokens: int | None = None, **kwargs):
     # The base pipeline defaults to lex-lite's v2 layout and cache.
-    kwargs.setdefault('feature_version', 1)
-    kwargs.setdefault('cache', './corpus/dataset')
+    kwargs.setdefault('feature_version', 2)
+    kwargs.setdefault('cache', './corpus/dataset_v2')
     if total_tokens is None:
-        cache = kwargs.get('cache', './corpus/dataset')
+        cache = kwargs.get('cache', './corpus/dataset_v2')
         meta_path = Path(cache) / 'meta.json' if cache else None
         total_tokens = (
             json.loads(meta_path.read_text()).get('total_tokens_requested', DEFAULT_TOTAL_TOKENS)

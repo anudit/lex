@@ -20,7 +20,7 @@
 import { tokenize } from './tokenizer.js';
 import { LexRuntime, CLASS_NAMES } from './runtime.js';
 import { unpackWeights } from './weights-codec.js';
-import { WEIGHTS_SYM, WEIGHTS_F16_B85, META, PIPELINE } from './weights.js';
+import * as WEIGHTS from './weights.js';
 import { SHADER } from './shader.js';
 
 export { CLASS_NAMES };
@@ -40,7 +40,7 @@ export class Lexer {
    *   element per token.
    */
   async highlight(code) {
-    const tok = tokenize(code);
+    const tok = tokenize(code, WEIGHTS.META.config.feature_version ?? 1);
     if (!tok.count) return [];
     const classes = await this.#runtime.classify(tok.packed, tok.count);
     return toSpans(code, tok, classes);
@@ -48,7 +48,7 @@ export class Lexer {
 
   /** Per-token classes, for callers that want to do their own span assembly. */
   async classify(code) {
-    const tok = tokenize(code);
+    const tok = tokenize(code, WEIGHTS.META.config.feature_version ?? 1);
     if (!tok.count) return { tokens: tok, classes: new Uint32Array(0) };
     return { tokens: tok, classes: await this.#runtime.classify(tok.packed, tok.count) };
   }
@@ -59,7 +59,7 @@ export class Lexer {
    * numpy reference stage by stage.
    */
   async debugStage(code, stage) {
-    const tok = tokenize(code);
+    const tok = tokenize(code, WEIGHTS.META.config.feature_version ?? 1);
     return this.#runtime.classify(tok.packed, tok.count, stage);
   }
 
@@ -100,9 +100,13 @@ let shared = null;
 export async function createLexer(options = {}) {
   const { shared: useShared = true } = options;
   if (useShared && shared) return shared;
-  const { planes, fp } = unpackWeights(WEIGHTS_SYM, WEIGHTS_F16_B85, META);
+  const { planes, fp } = unpackWeights(
+    WEIGHTS.WEIGHTS_PLANES_HEX ?? WEIGHTS.WEIGHTS_SYM,
+    WEIGHTS.WEIGHTS_SCALARS_B64 ?? WEIGHTS.WEIGHTS_F16_B85,
+    WEIGHTS.META,
+  );
   const runtime = await LexRuntime.create({
-    shader: SHADER, planes, fp, steps: PIPELINE, dim: META.config.dim,
+    shader: SHADER, planes, fp, steps: WEIGHTS.PIPELINE, dim: WEIGHTS.META.config.dim,
   });
   const lexer = new Lexer(runtime);
   if (useShared) shared = lexer;

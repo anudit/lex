@@ -62,8 +62,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint', nargs='+', default=['./checkpoints_teacher/best_model.pt'],
                         help='one teacher, or one cross-fitted teacher per fold')
-    parser.add_argument('--dataset', default='./corpus/dataset')
-    parser.add_argument('--out', default='./corpus/dataset/teacher_logits.npy')
+    parser.add_argument('--dataset', default='./corpus/dataset_v2')
+    parser.add_argument('--out', default='./corpus/dataset_v2/teacher_logits.npy')
     parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--workers', type=int, default=8)
     parser.add_argument('--compile-mode', default='max-autotune')

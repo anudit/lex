@@ -1,4 +1,4 @@
-"""Opinionated entry point for the 110,352-byte mixed-precision student.
+"""Opinionated entry point for the 101,107-byte large-v2 student.
 
 All flags remain overridable. Defaults are inserted only when the caller did
 not provide that flag, so this stays compatible with ../train/train.py.
@@ -34,7 +34,7 @@ def main() -> None:
     student = student_config()
     world_size = int(os.environ.get('WORLD_SIZE', '1'))
     defaults = {
-        '--dataset': './corpus/dataset',
+        '--dataset': './corpus/dataset_v2',
         '--total-tokens': '160000000',
         '--out-dir': './checkpoints_student',
         # Both 48-epoch runs selected their final epoch with val loss still
@@ -61,11 +61,13 @@ def main() -> None:
         '--head-bits': str(student.head_bits),
         '--input-bits': str(student.input_bits),
         '--output-bits': str(student.output_bits),
+        '--embedding-scale': student.embedding_scale,
         '--sampler': 'tempered',
         '--sampling-exponent': '0.5',
         '--tail-floor': '0.00025',
         '--construct-boost': '1.0',
         '--boundary-boost': '1.0',
+        '--class-weight-exponent': '0.25',
         '--calibration-fraction': '0.167',
         '--lang-loss': '0.15',
         '--struct-loss': '0.2',
@@ -78,11 +80,11 @@ def main() -> None:
         # The old external set covers only 57 languages. An empty root makes the
         # 75/25 popularity/coverage validation score select this checkpoint.
         '--real-bench-root': '',
-        # lex-large keeps the original feature layout, four-view file context
-        # and fp16 scalars; ../train/train.py defaults to lex-lite's v2.
-        '--feature-version': '1',
-        '--ctx-views': 'full',
-        '--scalar-bits': '16',
+        # Port lex-lite's whitespace-free representation, remove context views
+        # duplicated by the signature, and QAT the scalar state to 8 bits.
+        '--feature-version': str(student.feature_version),
+        '--ctx-views': student.ctx_views,
+        '--scalar-bits': str(student.scalar_bits),
     }
     for flag, value in defaults.items():
         _default(flag, value)
@@ -92,7 +94,7 @@ def main() -> None:
     _default('--fused-optimizer')
 
     teacher = HERE / 'checkpoints_teacher' / 'best_model.pt'
-    teacher_logits = HERE / 'corpus' / 'dataset' / 'teacher_logits.npy'
+    teacher_logits = HERE / 'corpus' / 'dataset_v2' / 'teacher_logits.npy'
     if not _has('--full-precision'):
         if teacher_logits.exists() and not _has('--teacher-logits'):
             sys.argv.extend(['--teacher-logits', str(teacher_logits)])

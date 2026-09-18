@@ -9,7 +9,7 @@ from languages import DEFAULT_TOTAL_TOKENS, MIN_TOKENS_PER_LANG, TARGET_LANGUAGE
 def main() -> None:
     parser = argparse.ArgumentParser(description='Build the 185-language cached dataset')
     parser.add_argument('--labels', default='./corpus/labels')
-    parser.add_argument('--cache', default='./corpus/dataset')
+    parser.add_argument('--cache', default='./corpus/dataset_v2')
     parser.add_argument('--total-tokens', type=int, default=DEFAULT_TOTAL_TOKENS)
     parser.add_argument('--seq-len', type=int, default=512)
     parser.add_argument('--min-len', type=int, default=32)

@@ -14,7 +14,7 @@ from languages import (
     DEFAULT_TOTAL_TOKENS, MIN_TOKENS_PER_LANG, TARGET_LANGUAGES,
     token_budgets, weights,
 )
-from model import FIELD_SIZES, LexerConfig, NeuralLexer
+from model import FIELD_SIZES_V2, LexerConfig, NeuralLexer
 
 
 def _rle_length(value: str) -> int:
@@ -27,11 +27,11 @@ def main() -> None:
     budgets = token_budgets()
     assert sum(budgets.values()) == DEFAULT_TOTAL_TOKENS
     assert min(budgets.values()) >= MIN_TOKENS_PER_LANG
-    assert tuple(FIELD_SIZES) == tuple(key for key in data_pipeline.FEATURE_KEYS if key != 'flags')
+    assert tuple(FIELD_SIZES_V2) == tuple(key for key in data_pipeline.FEATURE_KEYS if key != 'flags')
 
     code = "def f(x):\n    return x + 1  # comment\n"
-    tokens = tokenizer.tokenize(code)
-    arrays = tokenizer.tokens_to_arrays(tokens)
+    tokens = tokenizer.tokenize_v2(code)
+    arrays = tokenizer.tokens_to_arrays(tokens, 2)
     features = {
         key: torch.from_numpy(value).unsqueeze(0)
         for key, value in arrays.items()
@@ -45,7 +45,7 @@ def main() -> None:
     assert torch.isfinite(logits).all()
 
     size = model.size_report()
-    assert size['packed_bytes'] == 110_352, size
+    assert size['packed_bytes'] == 101_107, size
     assert size['packed_bytes'] <= 111_000, size
 
     # Import through the shared exporter to verify that the wider feature table

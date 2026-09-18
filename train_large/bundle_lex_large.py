@@ -6,33 +6,10 @@ generator instead of train/wgsl.py.
 
 Bakes the exported model and generated shader into the `lex` package sources.
 
-The weight blob ships inline rather than as a fetched asset: the model is
-~35 KB, so the extra HTTP round-trip would cost more than the bytes, and
-inlining keeps `lex` a single import with no network dependency.
-
-Quantized codes ship as one hex character per code rather than densely
-bit-packed. In isolation this compresses much better than base85 of the same
-bytes -- densely packed bits look close to random noise to a general-purpose
-compressor, while per-code symbols preserve the long runs of repeated small
-values the codes actually have, and Brotli exploits that heavily: the SYM
-string alone was 26.8 KB after Brotli against 37.2 KB for base85 of the
-packed bytes. That gain does **not** survive shipping everything in one file,
-though -- measured end to end, the full generated weights.js (SYM + base85
-f16 + JSON metadata, one Brotli stream, which is how a bundled file is
-actually served) came out to 37.24 KB, statistically the same as the old
-all-base85 version's 37.23 KB. Brotli fits one shared entropy model to the
-whole file; mixing SYM's 16-symbol alphabet with base85's 90-symbol one and
-JSON erases most of SYM's own advantage. Kept anyway (not reverted to
-base85) because this code is headed upstream to a sibling project that may
-serve the weight blob as its own request rather than inlined alongside
-metadata, where the isolated-stream number would actually apply -- but do
-not describe this as a proven win for *this* repo's single-file deployment
-without re-measuring the real generated file, the way the isolated-stream
-number nearly was.
-
-`lex/src/weights-codec.js`'s decoders are hand-written mirrors of both
-schemes, so this can just call the stdlib base85 encoder and quant.py's own
-bitplane unpacker.
+The packed bit planes are emitted as byte-aligned hex and the fp16 headers plus
+8-bit scalar codes as base64, matching the compact v2 bundle format. The
+format-aware runtime keeps decoding the promoted v1 artifact until a trained
+v2 checkpoint is explicitly bundled.
 """
 
 from __future__ import annotations
@@ -43,42 +20,14 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'train'))
 
 import wgsl_large as wgsl  # bespoke generator -- see its module docstring
-from quant import unpack_bitplanes  # shared bit-packing utility, unaffected by width
-
-# One character per quantized code (0-15): every tensor in this model is
-# 1, 3, or 4 bits, so hex digits cover it exactly with no wasted alphabet.
-SYMBOL_ALPHABET = '0123456789ABCDEF'
-
-
-def encode_symbols(planes: np.ndarray, meta: dict) -> tuple[str, dict]:
-    """Hex-per-code encoding of every quantized tensor's codes, concatenated
-    in ascending plane_offset order. Returns the string and the trimmed
-    per-tensor index the decoder needs to slice it back apart."""
-    quantized = sorted(
-        ((name, t) for name, t in meta['tensors'].items() if 'plane_offset' in t),
-        key=lambda kv: kv[1]['plane_offset'])
-    chunks = []
-    index = {}
-    cursor = 0
-    for name, t in quantized:
-        bits, wpp = t['bits'], t['words_per_plane']
-        packed = planes[t['plane_offset']:t['plane_offset'] + t['plane_count']].reshape(bits, wpp)
-        n = wpp * 32
-        codes = unpack_bitplanes(packed, bits, 1, n).ravel()
-        chunks.append(''.join(SYMBOL_ALPHABET[c] for c in codes))
-        index[name] = {'bits': bits, 'offset': cursor, 'words': wpp, 'plane_offset': t['plane_offset']}
-        cursor += n
-    return ''.join(chunks), index
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument('--checkpoint-dir', default='./_lex_large_download')
+    ap.add_argument('--checkpoint-dir', default='./checkpoints_student')
     ap.add_argument('--lex-src', default='../lex-large/src')
     args = ap.parse_args()
 
@@ -87,17 +36,17 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     meta = json.loads((ck / 'weights.meta.json').read_text())
+    if meta.get('feature_version') != 2 or meta.get('scalar_bits') != 8:
+        raise ValueError('the upgraded lex-large bundle requires v2 features and 8-bit scalars')
     blob = (ck / 'weights.bin').read_bytes()
     nw = meta['plane_words']
-    planes = np.frombuffer(blob[:nw * 4], dtype=np.uint32)
-    f16_blob = blob[nw * 4:]
-    f16_b85 = base64.b85encode(f16_blob).decode()
-    sym, sym_index = encode_symbols(planes, meta)
+    planes_hex = blob[:nw * 4].hex()
+    scalars_b64 = base64.b64encode(blob[nw * 4:]).decode()
 
     slim = {k: meta[k] for k in
-            ('format', 'config', 'plane_words', 'f16_count',
-             'plane_bytes', 'f16_bytes', 'total_bytes', 'parameters')}
-    slim['sym_tensors'] = sym_index
+            ('format', 'config', 'feature_version', 'plane_words', 'f16_count', 'f16_stream_count',
+             'u8_count', 'scalar_segments', 'plane_bytes', 'f16_bytes',
+             'scalar_bits', 'total_bytes', 'parameters')}
     steps = wgsl.pipeline_order(meta['config']['n_layers'])
     (out / 'weights.js').write_text(
         '// Generated by train_large/bundle_lex_large.py -- do not edit.\n'
@@ -107,8 +56,8 @@ def main() -> None:
         '// the token-parallel passes; 0 means the pass needs the whole sequence in\n'
         '// one workgroup because it is sequential in t.\n'
         f'export const PIPELINE = {json.dumps(steps)};\n\n'
-        f'export const WEIGHTS_SYM =\n  "{sym}";\n\n'
-        f'export const WEIGHTS_F16_B85 =\n  "{f16_b85}";\n')
+        f'export const WEIGHTS_PLANES_HEX =\n  "{planes_hex}";\n\n'
+        f'export const WEIGHTS_SCALARS_B64 =\n  "{scalars_b64}";\n')
 
     shader = wgsl.generate(meta)
     (out / 'shader.wgsl').write_text(shader)
@@ -118,7 +67,8 @@ def main() -> None:
         f'export const SHADER = `{escaped}`;\n')
 
     print(f'bundled {meta["total_bytes"] / 1024:.2f} KB of weights '
-          f'({len(sym) / 1024:.1f} KB codes + {len(f16_b85) / 1024:.1f} KB f16 base85) '
+          f'({len(planes_hex) / 1024:.1f} KB plane hex + '
+          f'{len(scalars_b64) / 1024:.1f} KB scalar base64) '
           f'+ {len(shader) / 1024:.1f} KB shader -> {out}')
 
 

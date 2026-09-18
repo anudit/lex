@@ -1,0 +1,95 @@
+{
+  "title": "Loaded library size",
+  "subtitle": "runtime + selected language coverage · lower is better",
+  "footnote": "Minified and Brotli-compressed browser bundles. gpu-lexer and lex were measured on September 18, 2026; comparison libraries on September 9–18, 2026. Major web includes javascript, typescript, css, html, json, and markdown. gpu-lexer, lex-lite, and lex-large use the same bundle for every language. For lex-lite and lex-large, stacked bars show the breakdown between packed model weights and code (runtime, shader, tokenizer). Starry Night totals include its Oniguruma WASM payload.",
+  "rows": [
+    {
+      "name": "Sugar High (major 6 web languages)",
+      "bytes": 5451,
+      "display": "5.4KB"
+    },
+    {
+      "name": "Prism.js (major 6 web languages)",
+      "bytes": 8734,
+      "display": "8.6KB"
+    },
+    {
+      "name": "Sugar High (all 29 languages)",
+      "bytes": 9180,
+      "display": "8.8KB"
+    },
+    {
+      "name": "Highlight.js (major 6 web languages)",
+      "bytes": 15249,
+      "display": "14.9KB"
+    },
+    {
+      "name": "gpu-lexer",
+      "bytes": 28290,
+      "display": "27.6KB",
+      "highlight": true
+    },
+    {
+      "name": "lex-lite (ours, 52 languages)",
+      "bytes": 35303,
+      "display": "34.5KB",
+      "ours": true,
+      "stacked": {
+        "weights": {
+          "bytes": 28050,
+          "display": "27.4KB"
+        },
+        "code": {
+          "bytes": 7253,
+          "display": "7.1KB"
+        }
+      }
+    },
+    {
+      "name": "lex-large (ours, 185 languages)",
+      "bytes": 120906,
+      "display": "118.1KB",
+      "ours": true,
+      "stacked": {
+        "weights": {
+          "bytes": 108105,
+          "display": "105.6KB"
+        },
+        "code": {
+          "bytes": 12801,
+          "display": "12.5KB"
+        }
+      }
+    },
+    {
+      "name": "Prism.js (all 297 languages)",
+      "bytes": 166269,
+      "display": "162.1KB"
+    },
+    {
+      "name": "Starry Night (major 6 web languages)",
+      "bytes": 189683,
+      "display": "185.3KB"
+    },
+    {
+      "name": "Shiki (major 6 web languages)",
+      "bytes": 217108,
+      "display": "213.9KB"
+    },
+    {
+      "name": "Highlight.js (all 193 languages)",
+      "bytes": 246393,
+      "display": "240.4KB"
+    },
+    {
+      "name": "Shiki (all 242 grammars)",
+      "bytes": 1015296,
+      "display": "991.5KB"
+    },
+    {
+      "name": "Starry Night (all 710 grammars)",
+      "bytes": 1526575,
+      "display": "1.46MB"
+    }
+  ]
+}

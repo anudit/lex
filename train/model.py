@@ -23,9 +23,9 @@ lex-lite (v2): a token-classification model sized for WebGPU inference.
   * Quantization-aware throughout: 3-bit embedding, 1-bit projections, 4-bit
     depthwise kernels, 8-bit scales/biases/norms/decays (scalar_bits=8).
 
-lex-large (../train_large) builds on the same blocks with the base feature
-layout (feature_version=1), four-view context and fp16 scalars; those paths
-exist for it.
+lex-large (../train_large) builds on the same blocks with wider hashes and
+additional structural fields. Historical feature-version-1 checkpoints still
+load through the compatibility paths.
 """
 
 from __future__ import annotations

@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "capture": "echo \"with `bun run dev` running, open http://localhost:5173/capture.html — it writes src/results.json\""
+    "capture": "echo \"with `bun run dev` running, open http://localhost:5173/capture.html — it writes src/results.json\"",
+    "sizes": "node scripts/measure-sizes.mjs"
   },
   "dependencies": {
     "gpu-lexer": "^0.0.3",
@@ -18,6 +19,8 @@
     "sugar-high": "^2.3.1"
   },
   "devDependencies": {
-    "vite": "^7.1.5"
+    "@wooorm/starry-night": "^3.11.0",
+    "vite": "^7.1.5",
+    "vscode-oniguruma": "^2.0.1"
   }
 }

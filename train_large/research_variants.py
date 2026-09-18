@@ -35,6 +35,8 @@ class RMSQuantEmbedding(QuantEmbedding):
     """
     def _scale(self):
         square = self.weight.detach().square().mean(-1)
+        if self.groups is None:
+            return (2.5 * square.sqrt() / (2 ** (self.bits - 1) - 1))[:, None].clamp_min(1e-8)
         sums = square.new_zeros(self.n_scales).index_add(0, self.groups, square)
         counts = square.new_zeros(self.n_scales).index_add(0, self.groups, torch.ones_like(square))
         scales = 2.5 * (sums / counts.clamp_min(1)).sqrt() / (2 ** (self.bits - 1) - 1)
@@ -44,6 +46,9 @@ class RMSQuantEmbedding(QuantEmbedding):
         result = super().export_tensors()
         scale = self._scale()
         result['codes'] = _codes(self.weight.detach(), scale, self.bits)
+        if self.groups is None:
+            result['scale'] = scale.squeeze(-1).cpu().numpy()
+            return result
         ids = torch.zeros(self.n_scales, dtype=torch.long, device=self.weight.device)
         ids.scatter_(0, self.groups, torch.arange(len(self.groups), device=self.weight.device))
         result['scale'] = scale.squeeze(-1)[ids].cpu().numpy()

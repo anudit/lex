@@ -1,11 +1,9 @@
 """
 Numpy forward-pass reference for the lex-large checkpoint, to pin down
 wgsl_large.py's bespoke shader the same way train/reference.py pins down
-lex's. The forward pass itself (train/reference.py's Reference class) is
-already fully parametric off the checkpoint's own meta/config, so this file
-only swaps in train_large's tokenizer (which adds the paren/brace/bracket
-depth, line-position, indent, and quote-state fields lex-large's schema
-needs and train's tokenizer doesn't produce).
+lex's. The forward pass itself is parametric off the exported config; this
+file selects the matching large tokenizer version, including the wider hashes
+and extended structural state.
 """
 
 from __future__ import annotations
@@ -19,9 +17,9 @@ from reference import Reference  # noqa: E402
 import tokenizer  # train_large's own, resolved via this file's directory being first on sys.path
 
 
-def features_from_code(code: str):
-    toks = tokenizer.tokenize(code)
-    return tokenizer.tokens_to_arrays(toks), toks
+def features_from_code(code: str, version: int = 2):
+    toks = tokenizer.tokenize_version(code, version)
+    return tokenizer.tokens_to_arrays(toks, version), toks
 
 
 if __name__ == '__main__':
@@ -33,7 +31,8 @@ if __name__ == '__main__':
     ap.add_argument('--json-out', default='')
     args = ap.parse_args()
     ref = Reference(args.weights)
-    feats, toks = features_from_code(args.code)
+    version = ref.meta.get('feature_version', ref.meta.get('config', {}).get('feature_version', 1))
+    feats, toks = features_from_code(args.code, version)
     logits = ref.forward(feats)
     cls = logits.argmax(-1)
     from labels import CLASS_NAMES

@@ -17,7 +17,7 @@ try {
       fp: new Float32Array(candidate.fp), steps: candidate.steps, dim:96});
     let mismatches=0, maxEmbeddingError=0, tokens=0;
     for (const c of candidate.cases) {
-      const t = tokenize(c.code);
+      const t = tokenize(c.code, candidate.featureVersion ?? 1);
       const emb = await runtime.classify(t.packed,t.count,1);
       for(let i=0;i<emb.length;i++) maxEmbeddingError=Math.max(maxEmbeddingError,Math.abs(emb[i]-c.embedding[i]));
       const classes = await runtime.classify(t.packed,t.count);

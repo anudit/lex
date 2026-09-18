@@ -34,7 +34,8 @@ def main():
         reference = Reference(str(target))
         cases = []
         for code in CASES:
-            arrays = tokenizer.tokens_to_arrays(tokenizer.tokenize(code))
+            version = model.cfg.feature_version
+            arrays = tokenizer.tokens_to_arrays(tokenizer.tokenize_version(code, version), version)
             table = reference.W('embedding.table')
             emb = np.zeros((len(arrays['kind']), model.cfg.embed_dim), dtype=np.float32)
             for field, offset in meta['field_offsets'].items():
@@ -47,7 +48,8 @@ def main():
             emb = emb @ reference.W('embedding.up').T + reference.B('embedding.up')
             cases.append(dict(code=code, classes=reference.forward(arrays).argmax(-1).tolist(),
                               embedding=emb.ravel().tolist()))
-        suite.append(dict(name=checkpoint.stem, planes=planes.tolist(), fp=f16.astype(np.float32).tolist(),
+        suite.append(dict(name=checkpoint.stem, featureVersion=model.cfg.feature_version,
+                          planes=planes.tolist(), fp=f16.astype(np.float32).tolist(),
                           steps=pipeline_order(model.cfg.n_layers), cases=cases))
     (args.out / 'suite.json').write_text(json.dumps(suite))
     print(f'Prepared {len(suite)} candidate exports in {args.out}')

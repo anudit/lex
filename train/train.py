@@ -114,10 +114,11 @@ class DistributedEvalSampler(Sampler[int]):
         return len(self.indices)
 
 
-def class_weights(counts: dict[str, int], device: torch.device) -> torch.Tensor:
+def class_weights(counts: dict[str, int], device: torch.device,
+                  exponent: float = 0.5) -> torch.Tensor:
     freq = torch.tensor([max(1, counts.get(n, 0)) for n in CLASS_NAMES],
                         dtype=torch.float32)
-    w = (freq.sum() / freq).sqrt()
+    w = (freq.sum() / freq) ** exponent
     return (w / w.mean()).to(device)
 
 
@@ -395,6 +396,8 @@ def main() -> None:
                     help='sampling boost for windows with complete string/comment runs')
     ap.add_argument('--boundary-boost', type=float, default=1.0,
                     help='extra CE weight on tokens adjacent to a gold class transition')
+    ap.add_argument('--class-weight-exponent', type=float, default=0.5,
+                    help='inverse-frequency class weighting exponent; 0 disables it')
     ap.add_argument('--calibration-fraction', type=float, default=0.2,
                     help='final fraction of epochs sampled at natural benchmark weights')
     ap.add_argument('--teacher-checkpoint', default='',
@@ -457,13 +460,13 @@ def main() -> None:
                          'converged quantized model would push it away from its optimum '
                          'before re-converging.')
     ap.add_argument('--feature-version', type=int, choices=(1, 2), default=2,
-                    help='2 = lex-lite features (whitespace-free sequence, gap/indent/'
-                         'line/depth fields); 1 = the layout lex-large trains on')
+                    help='2 = whitespace-free sequence with gap/indent/line/depth '
+                         'fields; 1 = legacy feature layout')
     ap.add_argument('--ctx-views', choices=('full', 'prefix_suffix'), default='prefix_suffix',
-                    help='global-context pooled views (lex-large uses full)')
+                    help='global-context pooled views; prefix_suffix is the v2 default')
     ap.add_argument('--scalar-bits', type=int, choices=(8, 16), default=8,
-                    help='8 ships scales/biases/norms/decays as 8-bit codes (trained with '
-                         'QAT); lex-large ships them as fp16')
+                    help='8 ships scales/biases/norms/decays as QAT-trained 8-bit codes; '
+                         '16 preserves legacy fp16 scalars')
     ap.add_argument('--local-rank', '--local_rank', type=int, default=0,
                     help=argparse.SUPPRESS)
     args = ap.parse_args()
@@ -622,7 +625,7 @@ def main() -> None:
         with open(os.path.join(args.out_dir, 'run_manifest.json'), 'w') as handle:
             json.dump(run_manifest, handle, indent=2)
 
-    cw = class_weights(meta['label_counts'], device)
+    cw = class_weights(meta['label_counts'], device, args.class_weight_exponent)
     criterion = BoundaryWeightedCrossEntropy(cw, boundary_boost=args.boundary_boost)
 
     teacher = None

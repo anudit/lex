@@ -290,6 +290,137 @@ section h2 {
 .axis-ticks span:first-child { transform: none; }
 .axis-ticks span:last-child { transform: translateX(-100%); }
 
+/* ---------- size chart (Loaded library size) ---------- */
+
+.size-chart {
+  margin-top: 34px;
+}
+
+.size-chart .bar-row,
+.size-chart .axis {
+  grid-template-columns: 345px 1fr 78px;
+  gap: 14px;
+}
+
+.size-chart .bar-label {
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.size-chart .bar-track {
+  position: relative;
+  background: var(--track);
+  height: 20px;
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.size-chart .bar-track::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(to right, var(--line) 1px, transparent 1px);
+  background-size: 25% 100%;
+  border-right: 1px solid var(--line);
+  pointer-events: none;
+}
+
+.size-chart .bar-fill {
+  position: relative;
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  background: var(--bar);
+  border-radius: 1px;
+}
+
+.size-chart .bar-row.highlight .bar-fill,
+.size-chart .bar-row.ours .bar-fill {
+  background: var(--bar-fast);
+}
+
+.size-chart .bar-row.highlight .bar-label,
+.size-chart .bar-row.ours .bar-label {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.size-chart .bar-row.highlight .bar-value,
+.size-chart .bar-row.ours .bar-value {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.size-legend-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 11.5px;
+  color: var(--dim);
+  margin: 0 0 14px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+}
+
+.legend-swatch.seg-weights {
+  background: var(--bar-fast);
+}
+
+.legend-swatch.seg-code {
+  background: var(--green);
+}
+
+.legend-swatch.seg-other {
+  background: var(--bar);
+}
+
+.size-chart .bar-track.stacked {
+  display: flex;
+  flex-direction: row;
+}
+
+.size-chart .bar-track.stacked .bar-fill {
+  flex-shrink: 0;
+}
+
+.size-chart .bar-seg-weights {
+  background: var(--bar-fast);
+  min-width: 4px;
+}
+
+.size-chart .bar-seg-code {
+  background: var(--green);
+  min-width: 3px;
+  border-left: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+@media (max-width: 720px) {
+  .size-chart .bar-row,
+  .size-chart .axis {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .size-chart .bar-label {
+    text-align: left;
+  }
+  .size-chart .bar-value {
+    text-align: right;
+  }
+}
+
 /* ---------- tables / details ---------- */
 
 .scroll { overflow-x: auto; }
