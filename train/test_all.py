@@ -19,6 +19,7 @@ Run: uv run python test_all.py
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -463,6 +464,25 @@ def test_labels_align_without_guessing():
     assert lab[0] == CLASS_NAMES.index('keyword')
     assert (lab[1:] == MASK).all()
     return 'uncovered spans stay masked'
+
+
+@test
+def test_content_denylist_prevents_benchmark_leakage():
+    """A held-out source must be dropped before tokenization and splitting."""
+    code = 'const heldOut = "verification";\n'
+    previous = dp._EXCLUDED_CONTENT_HASHES
+    try:
+        dp._EXCLUDED_CONTENT_HASHES = {hashlib.sha256(code.encode()).digest()}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'javascript' / 'held-out.js'
+            path.parent.mkdir()
+            path.write_text(code)
+            result = dp._prepare_file(
+                (str(path), f'0:{len(code)}', 0, 512, 1, 2))
+        assert result is None, 'denylisted content entered the dataset'
+    finally:
+        dp._EXCLUDED_CONTENT_HASHES = previous
+    return 'exact held-out content is dropped before tokenization'
 
 
 def main() -> int:

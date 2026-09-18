@@ -120,7 +120,9 @@ def main() -> None:
 
     shards = Path(args.gpu_lexer_root).resolve() / 'packages/training/data/generated/shards'
     inputs = [('train.jsonl.gz', 'train'), ('mining.jsonl.gz', 'mining')]
-    missing = [str(shards / name) for name, _ in inputs if not (shards / name).is_file()]
+    verification_path = shards / 'verification.jsonl.gz'
+    missing = ([str(shards / name) for name, _ in inputs if not (shards / name).is_file()]
+               + ([] if verification_path.is_file() else [str(verification_path)]))
     if missing:
         raise SystemExit(f'missing gpu-lexer shards: {", ".join(missing)}')
 
@@ -164,6 +166,14 @@ def main() -> None:
                 supervised += sum(cls != MASK for cls in classes)
     temporary.replace(label_path)
 
+    verification_hashes: set[str] = set()
+    for item in items(verification_path, 'verification'):
+        source = item.get('source', '')
+        if source:
+            verification_hashes.add(hashlib.sha256(source.encode()).hexdigest())
+    exclusion_path = labels_dir / 'exclude.gpu-verification.sha256'
+    exclusion_path.write_text(''.join(f'{digest}\n' for digest in sorted(verification_hashes)))
+
     provenance = {
         'format': 'lex-large-gpu-lexer-import-v1',
         'verification_excluded': True,
@@ -172,6 +182,13 @@ def main() -> None:
              'sha256': sha256(shards / name)}
             for name, split in inputs
         ],
+        'verification_shard': {
+            'name': verification_path.name,
+            'bytes': verification_path.stat().st_size,
+            'sha256': sha256(verification_path),
+            'unique_source_hashes_excluded': len(verification_hashes),
+            'exclusion_file': exclusion_path.name,
+        },
         'label_shard': args.shard_name,
         'files': sum(written.values()),
         'source_characters': source_chars,
@@ -187,6 +204,7 @@ def main() -> None:
     print(f'supervised {supervised:,} / {source_chars:,} source characters')
     print(f'labels: {label_path}')
     print(f'provenance: {provenance_path}')
+    print(f'excluded {len(verification_hashes):,} unique verification-source hashes')
     if skipped:
         print(f'skipped {sum(skipped.values()):,} files without an exact large-language mapping')
 

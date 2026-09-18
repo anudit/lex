@@ -59,6 +59,7 @@ def feature_keys(version: int) -> tuple[str, ...]:
     return FEATURE_KEYS if version == 1 else FEATURE_KEYS_V2
 
 _RLE = re.compile(r'(\d):(\d+)')
+_EXCLUDED_CONTENT_HASHES: set[bytes] = set()
 
 
 def decode_rle(rle: str, length: int) -> np.ndarray:
@@ -236,6 +237,8 @@ def _prepare_file(job: tuple[str, str, int, int, int, int]):
         code = Path(path).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError):
         return None
+    if hashlib.sha256(code.encode()).digest() in _EXCLUDED_CONTENT_HASHES:
+        return None
     char_cls = decode_rle(rle, len(code))
     if version == 1:
         # lex-large's tokenizer module only has the version-1 entry points.
@@ -306,7 +309,9 @@ def build(
             f'not {feature_version}; use a separate cache directory')
 
     if cache_path and cached_meta is not None:
-        label_mtime = max((f.stat().st_mtime for f in Path(label_dir).glob('labels.*.tsv')), default=0)
+        input_files = [*Path(label_dir).glob('labels.*.tsv'),
+                       *Path(label_dir).glob('exclude.*.sha256')]
+        label_mtime = max((f.stat().st_mtime for f in input_files), default=0)
         cache_mtime = (cache_path / 'meta.json').stat().st_mtime
         if cached_meta.get('total_tokens_requested') == total_tokens and cache_mtime >= label_mtime:
             return _load_cache(cache_path, seq_len)
@@ -317,6 +322,14 @@ def build(
     if not label_files:
         raise FileNotFoundError(
             f'no Shiki label shards in {label_dir}; run build_labels.py first')
+
+    global _EXCLUDED_CONTENT_HASHES
+    _EXCLUDED_CONTENT_HASHES = set()
+    for exclusion_file in sorted(Path(label_dir).glob('exclude.*.sha256')):
+        for line in exclusion_file.read_text().splitlines():
+            digest = line.strip()
+            if digest:
+                _EXCLUDED_CONTENT_HASHES.add(bytes.fromhex(digest))
 
     per_split: dict[str, list[dict]] = {'train': [], 'val': [], 'test': []}
     used_tokens: Counter[str] = Counter()
@@ -389,6 +402,7 @@ def build(
     meta['total_tokens_requested'] = total_tokens
     meta['feature_version'] = feature_version
     meta['files_skipped_grammar'] = stats['files_skipped_grammar']
+    meta['excluded_content_hashes'] = len(_EXCLUDED_CONTENT_HASHES)
     if cache_path:
         _save_cache(cache_path, per_split, meta)
     return datasets, meta

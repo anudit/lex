@@ -76,6 +76,9 @@ The default target is **160 million labelled lexer tokens**. Allocation is exact
 - Compatible raw files from the completed compact run are hardlinked into the
   large corpus and relabelled under the 185-language manifest. Aliases such as
   `shell` to `bash` and `html` to `xml` are mapped without duplicating disk data.
+- gpu-lexer's `train` and `mining` shards are imported with their native
+  confidence-gated labels. Its verification shard stays held out, and an exact
+  content-hash denylist removes matching files introduced by any other source.
 - Aim for at least 12 repositories and 250 files per grammar. Sparse historical
   languages should use upstream compiler/library suites plus Highlight.js and
   GitHub Linguist fixtures; synthetic snippets should stay below 5%.
@@ -104,7 +107,8 @@ GITHUB_TOKEN=... .venv/bin/python discover_repos.py
 .venv/bin/python bootstrap_fixtures.py
 .venv/bin/python fetch_corpus.py
 .venv/bin/python build_labels.py --shards 8
-.venv/bin/python build_dataset.py  # writes corpus/dataset_v2
+.venv/bin/python import_gpu_lexer_corpus.py --gpu-lexer-root ../../gpu-lexer
+.venv/bin/python build_dataset.py --allow-underfilled  # writes corpus/dataset_v2
 .venv/bin/python test_setup.py
 ```
 
